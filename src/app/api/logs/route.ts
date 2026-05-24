@@ -1,45 +1,48 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readRows, SHEETS } from "@/lib/sheets";
-
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "admin123";
+import { readSessionFromHeaders } from "@/lib/google-auth";
+import { readRows, TABS } from "@/lib/sheets";
 
 export async function GET(req: NextRequest) {
-  const pwd = req.nextUrl.searchParams.get("pwd");
-  if (pwd !== ADMIN_PASSWORD) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = readSessionFromHeaders(req.headers);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const sid = session.spreadsheetId;
 
   const [waterRows, tempRows] = await Promise.all([
-    readRows(SHEETS.water),
-    readRows(SHEETS.temp),
+    readRows(TABS.water, sid),
+    readRows(TABS.temp,  sid),
   ]);
 
+  // Water: [ts, date, time, logger, loggerEmail, location, meterPoint, reading, unit, notes]
   const waterLogs = waterRows.map(r => ({
-    type:       "water" as const,
-    timestamp:  r[0] ?? "",
-    date:       r[1] ?? "",
-    time:       r[2] ?? "",
-    logger:     r[3] ?? "",
-    location:   r[4] ?? "",
-    meterPoint: r[5] ?? "",
-    reading:    r[6] ?? "",
-    unit:       r[7] ?? "",
-    notes:      r[8] ?? "",
+    type:        "water" as const,
+    timestamp:   r[0]  ?? "",
+    date:        r[1]  ?? "",
+    time:        r[2]  ?? "",
+    logger:      r[3]  ?? "",
+    loggerEmail: r[4]  ?? "",
+    location:    r[5]  ?? "",
+    meterPoint:  r[6]  ?? "",
+    reading:     r[7]  ?? "",
+    unit:        r[8]  ?? "",
+    notes:       r[9]  ?? "",
   }));
 
+  // Temp: [ts, date, time, logger, loggerEmail, location, area, temperature, min, max, status, notes]
   const tempLogs = tempRows.map(r => ({
     type:        "temperature" as const,
-    timestamp:   r[0] ?? "",
-    date:        r[1] ?? "",
-    time:        r[2] ?? "",
-    logger:      r[3] ?? "",
-    location:    r[4] ?? "",
-    area:        r[5] ?? "",
-    temperature: r[6] ?? "",
-    min:         r[7] ?? "",
-    max:         r[8] ?? "",
-    status:      r[9] ?? "OK",
-    notes:       r[10] ?? "",
+    timestamp:   r[0]  ?? "",
+    date:        r[1]  ?? "",
+    time:        r[2]  ?? "",
+    logger:      r[3]  ?? "",
+    loggerEmail: r[4]  ?? "",
+    location:    r[5]  ?? "",
+    area:        r[6]  ?? "",
+    temperature: r[7]  ?? "",
+    min:         r[8]  ?? "",
+    max:         r[9]  ?? "",
+    status:      (r[10] ?? "OK") as "OK" | "WARN" | "DANGER",
+    notes:       r[11] ?? "",
   }));
 
   const all = [...waterLogs, ...tempLogs].sort(

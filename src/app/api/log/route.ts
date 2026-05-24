@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { appendRow, ensureHeaders, SHEETS } from "@/lib/sheets";
+import { appendRow, TABS } from "@/lib/sheets";
 import { LOCATION, tempStatus, TEMP_AREAS } from "@/lib/config";
 import { format } from "date-fns";
 
@@ -11,35 +11,30 @@ export async function POST(req: NextRequest) {
     const date = format(now, "dd/MM/yyyy");
     const time = format(now, "HH:mm");
 
-    await ensureHeaders();
-
     if (body.type === "water") {
-      const { logger, meterPoint, reading, unit, notes } = body as {
-        logger: string; meterPoint: string; reading: string; unit: string; notes: string;
+      const { logger, loggerEmail, meterPoint, reading, unit, notes } = body as {
+        logger: string; loggerEmail: string; meterPoint: string;
+        reading: string; unit: string; notes: string;
       };
-      await appendRow(SHEETS.water, [
-        ts, date, time, logger, LOCATION, meterPoint, reading, unit, notes ?? "",
+      await appendRow(TABS.water, [
+        ts, date, time, logger, loggerEmail ?? "", LOCATION,
+        meterPoint, reading, unit, notes ?? "",
       ]);
       return NextResponse.json({ ok: true });
     }
 
     if (body.type === "temperature") {
-      const { logger, area, temperature, notes } = body as {
-        logger: string; area: string; temperature: string; notes: string;
+      const { logger, loggerEmail, area, temperature, notes } = body as {
+        logger: string; loggerEmail: string; area: string;
+        temperature: string; notes: string;
       };
-      const areaConfig = TEMP_AREAS.find(a => a.id === area);
+      const cfg    = TEMP_AREAS.find(a => a.id === area);
       const tempNum = parseFloat(temperature);
-      const status = areaConfig
-        ? tempStatus(tempNum, areaConfig.min, areaConfig.max)
-        : "OK";
+      const status  = cfg ? tempStatus(tempNum, cfg.min, cfg.max) : "OK";
 
-      await appendRow(SHEETS.temp, [
-        ts, date, time, logger, LOCATION, area,
-        temperature,
-        areaConfig?.min ?? "",
-        areaConfig?.max ?? "",
-        status,
-        notes ?? "",
+      await appendRow(TABS.temp, [
+        ts, date, time, logger, loggerEmail ?? "", LOCATION,
+        area, temperature, cfg?.min ?? "", cfg?.max ?? "", status, notes ?? "",
       ]);
       return NextResponse.json({ ok: true, status });
     }
