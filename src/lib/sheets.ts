@@ -21,6 +21,7 @@ export const TABS = {
   temp:    "Temp Logs",
   staff:   "Staff",
   targets: "Targets",
+  subs:    "Subscriptions",
 } as const;
 
 // ── Generic helpers ───────────────────────────────────────────────────────────
@@ -138,6 +139,126 @@ export async function upsertTarget(
   } else {
     await appendRow(TABS.targets, [metric, String(value), "", "", "daily", ""], id);
   }
+}
+
+// ── Push subscriptions ────────────────────────────────────────────────────────
+
+export interface PushSub {
+  email:            string;
+  name:             string;
+  subscriptionJson: string;
+  endpoint:         string;
+  createdAt:        string;
+  active:           boolean;
+}
+
+export async function readSubscriptions(overrideSheetId?: string): Promise<PushSub[]> {
+  try {
+    const rows = await readRows(TABS.subs, overrideSheetId);
+    return rows
+      .filter(r => r[0] && (r[5] ?? "TRUE").toUpperCase() !== "FALSE")
+      .map(r => ({
+        email:            r[0] ?? "",
+        name:             r[1] ?? "",
+        subscriptionJson: r[2] ?? "{}",
+        endpoint:         r[3] ?? "",
+        createdAt:        r[4] ?? "",
+        active:           (r[5] ?? "TRUE").toUpperCase() !== "FALSE",
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export async function addSubscription(
+  email: string, name: string, subscriptionJson: string, overrideSheetId?: string
+) {
+  const id      = overrideSheetId ?? sheetId();
+  const endpoint = (() => { try { return JSON.parse(subscriptionJson).endpoint ?? ""; } catch { return ""; } })();
+
+  try {
+    const rows   = await readRows(TABS.subs, id);
+    const rowIdx = rows.findIndex(r => r[3] === endpoint);
+    if (rowIdx >= 0) {
+      // Reactivate and update name
+      const sheets = getSheetsClient();
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: id,
+        range: `'${TABS.subs}'!A${rowIdx + 2}:F${rowIdx + 2}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[email, name, subscriptionJson, endpoint, rows[rowIdx][4] ?? "", "TRUE"]] },
+      });
+    } else {
+      await appendRow(TABS.subs, [email, name, subscriptionJson, endpoint, new Date().toISOString(), "TRUE"], id);
+    }
+  } catch {
+    await appendRow(TABS.subs, [email, name, subscriptionJson, endpoint, new Date().toISOString(), "TRUE"], id);
+  }
+}
+
+export async function deactivateSubscription(endpoint: string, overrideSheetId?: string) {
+  const id      = overrideSheetId ?? sheetId();
+  const sheets  = getSheetsClient();
+  const rows    = await readRows(TABS.subs, id);
+  const rowIdx  = rows.findIndex(r => r[3] === endpoint);
+  if (rowIdx < 0) return;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: id,
+    range: `'${TABS.subs}'!F${rowIdx + 2}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [["FALSE"]] },
+  });
+}
+
+// ── Reminder schedule (stored as special rows in Targets tab) ─────────────────
+
+export interface ReminderSchedule {
+  enabled: boolean;
+  times:   string[];   // ["08:00","12:00","16:00"] in WAT (UTC+1)
+  message: string;
+}
+
+async function upsertTargetRow(
+  metric: string, value: string, notes: string, overrideSheetId?: string
+) {
+  const id     = overrideSheetId ?? sheetId();
+  const sheets = getSheetsClient();
+  const rows   = await readRows(TABS.targets, id);
+  const rowIdx = rows.findIndex(r => r[0] === metric);
+  if (rowIdx >= 0) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: id,
+      range: `'${TABS.targets}'!B${rowIdx + 2}:F${rowIdx + 2}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[value, rows[rowIdx][2] ?? "", rows[rowIdx][3] ?? "", rows[rowIdx][4] ?? "daily", notes]] },
+    });
+  } else {
+    await appendRow(TABS.targets, [metric, value, "", "", "daily", notes], id);
+  }
+}
+
+export async function readReminderSchedule(overrideSheetId?: string): Promise<ReminderSchedule> {
+  try {
+    const rows       = await readRows(TABS.targets, overrideSheetId);
+    const enabledRow = rows.find(r => r[0] === "reminders_enabled");
+    const timesRow   = rows.find(r => r[0] === "reminder_times");
+    const msgRow     = rows.find(r => r[0] === "reminder_message");
+    return {
+      enabled: (enabledRow?.[1] ?? "0") === "1",
+      times:   (timesRow?.[5] ?? "").split(",").map(t => t.trim()).filter(Boolean),
+      message: msgRow?.[5] ?? "",
+    };
+  } catch {
+    return { enabled: false, times: [], message: "" };
+  }
+}
+
+export async function saveReminderSchedule(schedule: ReminderSchedule, overrideSheetId?: string) {
+  await Promise.all([
+    upsertTargetRow("reminders_enabled", schedule.enabled ? "1" : "0", "",                          overrideSheetId),
+    upsertTargetRow("reminder_times",    String(schedule.times.length), schedule.times.join(","),    overrideSheetId),
+    upsertTargetRow("reminder_message",  "0",                           schedule.message,            overrideSheetId),
+  ]);
 }
 
 // ── Log compliance stats ──────────────────────────────────────────────────────

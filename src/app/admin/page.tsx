@@ -36,7 +36,7 @@ interface TempLog {
   status: "OK" | "WARN" | "DANGER"; notes: string;
 }
 type AnyLog = WaterLog | TempLog;
-type Tab = "overview" | "logs" | "staff" | "targets";
+type Tab = "overview" | "logs" | "staff" | "targets" | "notify";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -572,6 +572,240 @@ function TargetsPanel({ loaded, onSaved }: { loaded: boolean; onSaved: (vals: Re
   );
 }
 
+// ── Notifications Panel ───────────────────────────────────────────────────────
+
+interface NotifyData {
+  schedule: { enabled: boolean; times: string[]; message: string };
+  subscriberCount: number;
+  subscribers: { email: string; name: string; createdAt: string }[];
+}
+
+function NotificationsPanel() {
+  const [data,    setData]    = useState<NotifyData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [enabled, setEnabled] = useState(false);
+  const [times,   setTimes]   = useState<string[]>(["08:00", "13:00", "17:00"]);
+  const [message, setMessage] = useState("");
+  const [saving,  setSaving]  = useState(false);
+  const [sending, setSending] = useState(false);
+  const [msg,     setMsg]     = useState<{ text: string; ok: boolean } | null>(null);
+  const vapidConfigured = !!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+
+  useEffect(() => {
+    fetch("/api/admin/notify")
+      .then(r => r.json())
+      .then((d: NotifyData) => {
+        setData(d);
+        setEnabled(d.schedule.enabled);
+        setTimes(d.schedule.times.length > 0 ? d.schedule.times : ["08:00", "13:00", "17:00"]);
+        setMessage(d.schedule.message);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  function addTime() {
+    if (times.length >= 4) return;
+    setTimes(prev => [...prev, "12:00"]);
+  }
+  function removeTime(i: number) { setTimes(prev => prev.filter((_, idx) => idx !== i)); }
+  function updateTime(i: number, val: string) { setTimes(prev => prev.map((t, idx) => idx === i ? val : t)); }
+
+  async function save() {
+    setSaving(true); setMsg(null);
+    try {
+      const r = await fetch("/api/admin/notify", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled, times: times.filter(Boolean), message }),
+      });
+      if (!r.ok) throw new Error();
+      setMsg({ text: "Schedule saved.", ok: true });
+      setData(prev => prev ? { ...prev, schedule: { enabled, times, message } } : prev);
+    } catch {
+      setMsg({ text: "Failed to save. Try again.", ok: false });
+    } finally { setSaving(false); }
+  }
+
+  async function sendNow() {
+    if (!confirm(`Send a test notification to all ${data?.subscriberCount ?? 0} subscriber(s) now?`)) return;
+    setSending(true); setMsg(null);
+    try {
+      const r = await fetch("/api/admin/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      const json = await r.json() as { sent: number; total: number };
+      setMsg({ text: `Sent to ${json.sent} of ${json.total} device(s).`, ok: true });
+    } catch {
+      setMsg({ text: "Failed to send.", ok: false });
+    } finally { setSending(false); }
+  }
+
+  if (loading) {
+    return <div style={{ padding: "3rem", textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem" }}>Loading…</div>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+
+      {/* VAPID warning */}
+      {!vapidConfigured && (
+        <div className="card" style={{ padding: "1rem", borderColor: "rgba(245,158,11,0.35)", background: "rgba(245,158,11,0.06)" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--warn)", marginBottom: "0.35rem" }}>⚙️ Setup required</p>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.6 }}>
+            Add these environment variables to Vercel to enable push notifications:
+          </p>
+          {[
+            ["NEXT_PUBLIC_VAPID_PUBLIC_KEY", "Your VAPID public key"],
+            ["VAPID_PRIVATE_KEY",            "Your VAPID private key"],
+            ["VAPID_SUBJECT",                "mailto:your-email@example.com"],
+            ["CRON_SECRET",                  "Random string to secure /api/cron/notify"],
+          ].map(([k, v]) => (
+            <div key={k} style={{ marginTop: "0.4rem", fontFamily: "monospace", fontSize: "0.7rem", color: "var(--text-secondary)" }}>
+              <span style={{ color: "var(--brand)" }}>{k}</span> — {v}
+            </div>
+          ))}
+          <p style={{ marginTop: "0.625rem", fontSize: "0.7rem", color: "var(--text-muted)" }}>
+            Generate VAPID keys: <code style={{ background: "var(--bg-elevated)", padding: "1px 5px", borderRadius: 4 }}>npx web-push generate-vapid-keys</code>
+          </p>
+        </div>
+      )}
+
+      {/* Subscriber count */}
+      <div className="card" style={{ padding: "1rem 1.125rem", display: "flex", alignItems: "center", gap: "1rem" }}>
+        <div style={{ width: 44, height: 44, borderRadius: 12, background: "var(--brand-dim)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.4rem", flexShrink: 0 }}>
+          🔔
+        </div>
+        <div style={{ flex: 1 }}>
+          <p style={{ fontWeight: 700, fontSize: "1.5rem", color: "var(--brand)", lineHeight: 1 }}>{data?.subscriberCount ?? 0}</p>
+          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>device{(data?.subscriberCount ?? 0) !== 1 ? "s" : ""} subscribed to push notifications</p>
+        </div>
+        <button
+          onClick={sendNow}
+          disabled={sending || (data?.subscriberCount ?? 0) === 0}
+          style={{ fontSize: "0.78rem", fontWeight: 600, padding: "7px 14px", borderRadius: 8, background: "var(--brand)", color: "#080B10", border: "none", cursor: (data?.subscriberCount ?? 0) === 0 ? "not-allowed" : "pointer", opacity: (data?.subscriberCount ?? 0) === 0 ? 0.4 : 1, flexShrink: 0 }}
+        >
+          {sending ? "Sending…" : "Send Now"}
+        </button>
+      </div>
+
+      {/* Subscriber list */}
+      {(data?.subscribers.length ?? 0) > 0 && (
+        <div>
+          <p style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.5rem" }}>
+            Subscribed devices
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {data!.subscribers.map((s, i) => (
+              <div key={i} className="card-elevated" style={{ padding: "0.6rem 0.875rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--text-primary)" }}>{s.name}</span>
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginLeft: "0.5rem" }}>{s.email}</span>
+                </div>
+                <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>{s.createdAt ? new Date(s.createdAt).toLocaleDateString("en-GB") : ""}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Schedule editor */}
+      <div className="card" style={{ padding: "1.25rem" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.125rem" }}>
+          <div>
+            <p style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-primary)" }}>Reminder Schedule</p>
+            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>Times are in WAT (West Africa Time, UTC+1)</p>
+          </div>
+          {/* Enable toggle */}
+          <button
+            onClick={() => setEnabled(e => !e)}
+            style={{
+              width: 44, height: 24, borderRadius: 999, border: "none", cursor: "pointer",
+              background: enabled ? "var(--brand)" : "var(--bg-elevated)",
+              position: "relative", transition: "background 200ms", flexShrink: 0,
+            }}
+          >
+            <span style={{
+              position: "absolute", top: 3, left: enabled ? 22 : 3,
+              width: 18, height: 18, borderRadius: "50%", background: "#fff",
+              transition: "left 200ms",
+            }} />
+          </button>
+        </div>
+
+        {enabled && (
+          <>
+            <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem" }}>
+              Reminder times
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "0.875rem" }}>
+              {times.map((t, i) => (
+                <div key={i} style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                  <input
+                    type="time"
+                    value={t}
+                    onChange={e => updateTime(i, e.target.value)}
+                    style={{ flex: 1, backgroundColor: "var(--bg-elevated)", border: "1px solid var(--bg-border)", borderRadius: 8, color: "var(--text-primary)", padding: "0.5rem 0.75rem", fontSize: "0.9rem", outline: "none" }}
+                  />
+                  <button
+                    onClick={() => removeTime(i)}
+                    disabled={times.length <= 1}
+                    style={{ padding: "0.5rem 0.75rem", borderRadius: 8, background: "var(--danger-dim)", color: "var(--danger)", border: "1px solid rgba(239,68,68,.25)", cursor: times.length <= 1 ? "not-allowed" : "pointer", fontSize: "0.8rem", opacity: times.length <= 1 ? 0.4 : 1 }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            {times.length < 4 && (
+              <button
+                onClick={addTime}
+                style={{ fontSize: "0.78rem", padding: "5px 12px", borderRadius: 8, background: "var(--bg-elevated)", border: "1px solid var(--bg-border)", color: "var(--text-secondary)", cursor: "pointer", marginBottom: "0.875rem" }}
+              >
+                + Add time
+              </button>
+            )}
+
+            <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.375rem" }}>
+              Notification message <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(optional)</span>
+            </label>
+            <input
+              className="input-field"
+              style={{ fontSize: "0.85rem", padding: "0.6rem 0.875rem", marginBottom: "1rem" }}
+              placeholder="Please submit your water and temperature readings."
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+            />
+          </>
+        )}
+
+        <button
+          onClick={save}
+          disabled={saving}
+          style={{ padding: "0.65rem 1.5rem", borderRadius: 8, background: "var(--brand)", color: "#080B10", border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.85rem", opacity: saving ? 0.6 : 1 }}
+        >
+          {saving ? "Saving…" : "Save Schedule"}
+        </button>
+        {msg && (
+          <p style={{ marginTop: "0.625rem", fontSize: "0.78rem", color: msg.ok ? "var(--ok)" : "var(--danger)" }}>
+            {msg.text}
+          </p>
+        )}
+      </div>
+
+      {/* Cron info */}
+      <div className="card" style={{ padding: "1rem", borderColor: "rgba(0,212,170,0.2)", background: "rgba(0,212,170,0.03)" }}>
+        <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--brand)", marginBottom: "0.3rem" }}>⚡ How it works</p>
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
+          A Vercel cron job runs every 30 minutes and calls <code style={{ fontSize: "0.68rem", background: "var(--bg-elevated)", padding: "1px 5px", borderRadius: 4 }}>/api/cron/notify</code>. If the current WAT time falls within a configured reminder window, a push notification is sent to all subscribed devices. Requires a <strong style={{ color: "var(--text-secondary)" }}>Vercel Pro</strong> plan for sub-daily cron frequency.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
@@ -676,10 +910,11 @@ export default function AdminPage() {
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: "overview", label: "Overview" },
-    { id: "logs",     label: "Logs"     },
-    { id: "staff",    label: "Staff"    },
-    { id: "targets",  label: "Targets"  },
+    { id: "overview", label: "Overview"      },
+    { id: "logs",     label: "Logs"          },
+    { id: "staff",    label: "Staff"         },
+    { id: "targets",  label: "Targets"       },
+    { id: "notify",   label: "Notifications" },
   ];
 
   return (
@@ -748,6 +983,9 @@ export default function AdminPage() {
             loaded={true}
             onSaved={() => loadStats()}
           />
+        )}
+        {activeTab === "notify" && (
+          <NotificationsPanel />
         )}
       </main>
     </div>

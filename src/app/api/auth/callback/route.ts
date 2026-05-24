@@ -30,6 +30,10 @@ const TABS = [
     name: "Targets",
     headers: ["Metric","Value","Unit","Location","Period","Notes"],
   },
+  {
+    name: "Subscriptions",
+    headers: ["Email","Name","Subscription JSON","Endpoint","Created At","Active"],
+  },
 ];
 
 const DEFAULT_TARGETS = [

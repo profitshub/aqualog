@@ -8,6 +8,39 @@ import { WATER_POINTS, TEMP_AREAS, CHECK_TIMES, HOTEL_NAME } from "@/lib/config"
 type LogType = "water" | "temperature";
 type Step    = "identity" | "validating" | "type" | "form" | "done";
 
+// ── Push helpers ──────────────────────────────────────────────────────────────
+
+function urlBase64ToArrayBuffer(b64: string): ArrayBuffer {
+  const pad  = "=".repeat((4 - (b64.length % 4)) % 4);
+  const base = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw  = window.atob(base);
+  const buf  = new ArrayBuffer(raw.length);
+  const arr  = new Uint8Array(buf);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return buf;
+}
+
+async function subscribeToPush(email: string, name: string): Promise<boolean> {
+  const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+  if (!vapidKey || !("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const existing = await reg.pushManager.getSubscription();
+    const sub = existing ?? await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToArrayBuffer(vapidKey),
+    });
+    await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name, subscription: sub }),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function currentShift(): string {
   const h = new Date().getHours();
   if (h < 10) return "Morning Check (07:00)";
@@ -47,6 +80,9 @@ export default function LogPage() {
   const [authError, setAuthError] = useState("");
   const [validating, setValidating] = useState(false);
 
+  // Push notifications
+  const [pushState, setPushState] = useState<"idle" | "prompt" | "subscribed" | "denied">("idle");
+
   // Submission
   const [submitting,  setSubmitting]  = useState(false);
   const [lastStatus,  setLastStatus]  = useState<"OK" | "WARN" | "DANGER" | null>(null);
@@ -61,7 +97,14 @@ export default function LogPage() {
   const [tempValue, setTempValue] = useState("");
   const [tempNotes, setTempNotes] = useState("");
 
-  // Restore from localStorage
+  // Register service worker once
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => null);
+    }
+  }, []);
+
+  // Restore from localStorage + check push permission
   useEffect(() => {
     const savedName  = localStorage.getItem("aqualog-name");
     const savedEmail = localStorage.getItem("aqualog-email");
@@ -70,6 +113,13 @@ export default function LogPage() {
       setName(savedName);
       setEmail(savedEmail);
       setStep("type");
+
+      // Check push state for returning loggers
+      if ("Notification" in window) {
+        if (Notification.permission === "granted") setPushState("subscribed");
+        else if (Notification.permission === "denied") setPushState("denied");
+        else if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) setPushState("prompt");
+      }
     } else if (savedName) {
       setName(savedName);
     }
@@ -93,6 +143,12 @@ export default function LogPage() {
         localStorage.setItem("aqualog-authorized", "1");
         setName(resolvedName);
         setStep("type");
+
+        // Show push prompt for new loggers (if not already answered)
+        if ("Notification" in window && process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
+          if (Notification.permission === "granted") setPushState("subscribed");
+          else if (Notification.permission !== "denied") setPushState("prompt");
+        }
       } else {
         setAuthError(json.reason ?? "Not authorized.");
       }
@@ -101,6 +157,14 @@ export default function LogPage() {
     } finally {
       setValidating(false);
     }
+  }
+
+  async function enablePush() {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") { setPushState("denied"); return; }
+    const savedEmail = localStorage.getItem("aqualog-email") ?? email;
+    const ok = await subscribeToPush(savedEmail, name);
+    setPushState(ok ? "subscribed" : "denied");
   }
 
   function selectType(t: LogType) {
@@ -228,6 +292,36 @@ export default function LogPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Push notification banner */}
+              {pushState === "prompt" && (
+                <div style={{ background: "var(--brand-dim)", border: "1px solid rgba(0,212,170,0.3)", borderRadius: 12, padding: "0.75rem 1rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <span style={{ fontSize: "1.2rem" }}>🔔</span>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--brand)", marginBottom: "0.1rem" }}>Get logging reminders</p>
+                    <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>We'll notify you when it's time to submit readings.</p>
+                  </div>
+                  <button
+                    onClick={enablePush}
+                    style={{ fontSize: "0.75rem", fontWeight: 600, padding: "5px 12px", borderRadius: 8, background: "var(--brand)", color: "#080B10", border: "none", cursor: "pointer", flexShrink: 0 }}
+                  >
+                    Enable
+                  </button>
+                  <button
+                    onClick={() => setPushState("denied")}
+                    style={{ fontSize: "1rem", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", lineHeight: 1, flexShrink: 0 }}
+                    title="Dismiss"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+              {pushState === "subscribed" && (
+                <div style={{ background: "var(--ok-dim)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 12, padding: "0.6rem 1rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontSize: "0.9rem" }}>✅</span>
+                  <p style={{ fontSize: "0.75rem", color: "var(--ok)" }}>Notifications enabled — you'll be reminded when it's time to log.</p>
+                </div>
+              )}
 
               <p style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginBottom: "1rem" }}>What are you logging?</p>
 
