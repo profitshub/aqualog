@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readSessionFromHeaders, getSessionSheetId } from "@/lib/google-auth";
-import { readStaff, addStaff, deactivateStaff } from "@/lib/sheets";
-import { getLocationName } from "@/lib/config";
+import { readSessionFromHeaders } from "@/lib/google-auth";
+import { readStaff, addStaff, deactivateStaff, getSheetIdForLocation, getLocationName } from "@/lib/sheets";
 
-function guard(req: NextRequest) { return readSessionFromHeaders(req.headers); }
-function loc(req: NextRequest)    { return req.nextUrl.searchParams.get("location"); }
+async function getGuardAndSid(req: NextRequest) {
+  const session = readSessionFromHeaders(req.headers);
+  if (!session || session.role !== "admin") return null;
+  const location = req.nextUrl.searchParams.get("location") ?? "";
+  const sid      = await getSheetIdForLocation(location);
+  const locName  = await getLocationName(location);
+  return { session, sid, locName };
+}
 
 export async function GET(req: NextRequest) {
-  const session = guard(req);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const sid      = getSessionSheetId(session, loc(req));
-  const locName  = getLocationName(loc(req) ?? "");
+  const ctx = await getGuardAndSid(req);
+  if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    return NextResponse.json(await readStaff(locName, sid));
+    return NextResponse.json(await readStaff(ctx.locName, ctx.sid));
   } catch (err) {
     console.error(err);
     return NextResponse.json({ error: "Failed to read staff" }, { status: 500 });
@@ -20,14 +23,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = guard(req);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const sid     = getSessionSheetId(session, loc(req));
-  const locName = getLocationName(loc(req) ?? "");
+  const ctx = await getGuardAndSid(req);
+  if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { email, name } = await req.json() as { email: string; name: string };
   if (!email || !name) return NextResponse.json({ error: "Email and name required" }, { status: 400 });
   try {
-    await addStaff(email.trim().toLowerCase(), name.trim(), locName, session.adminEmail, sid);
+    await addStaff(email.trim().toLowerCase(), name.trim(), ctx.locName, ctx.session.email, ctx.sid);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -36,13 +37,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = guard(req);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const sid = getSessionSheetId(session, loc(req));
+  const ctx = await getGuardAndSid(req);
+  if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { email } = await req.json() as { email: string };
   if (!email) return NextResponse.json({ error: "Email required" }, { status: 400 });
   try {
-    await deactivateStaff(email, sid);
+    await deactivateStaff(email, ctx.sid);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error(err);

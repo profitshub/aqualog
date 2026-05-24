@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readSessionFromHeaders, getSessionSheetId } from "@/lib/google-auth";
-import { todayStats, readTargets, readRows, TABS } from "@/lib/sheets";
-import { getLocationName } from "@/lib/config";
+import { readSessionFromHeaders } from "@/lib/google-auth";
+import { todayStats, readTargets, readRows, TABS, getSheetIdForLocation, getLocationName } from "@/lib/sheets";
 
 export async function GET(req: NextRequest) {
   const session = readSessionFromHeaders(req.headers);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session || session.role !== "admin") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-  const location = req.nextUrl.searchParams.get("location");
-  const sid      = getSessionSheetId(session, location);
-  const locName  = location ? getLocationName(location) : undefined;
+  const location = req.nextUrl.searchParams.get("location") ?? "";
+  const sid      = await getSheetIdForLocation(location);
+  const locName  = await getLocationName(location);
+
+  if (!sid) {
+    return NextResponse.json({ error: "Location not found or no sheet configured" }, { status: 404 });
+  }
 
   try {
     const [stats, targets, allWater, allTemp] = await Promise.all([

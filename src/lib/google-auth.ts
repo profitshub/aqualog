@@ -1,13 +1,8 @@
 import { google } from "googleapis";
 import { createHmac } from "crypto";
 
-export const OAUTH_SCOPES = [
-  "https://www.googleapis.com/auth/spreadsheets",
-  "https://www.googleapis.com/auth/drive.file",
-  "openid",
-  "email",
-  "profile",
-];
+// Identity only — no spreadsheet scopes needed (service account handles all sheet ops)
+export const OAUTH_SCOPES = ["openid", "email", "profile"];
 
 export function createOAuthClient() {
   return new google.auth.OAuth2(
@@ -21,25 +16,19 @@ export function getAuthUrl(): string {
   return createOAuthClient().generateAuthUrl({
     access_type: "offline",
     scope: OAUTH_SCOPES,
-    prompt: "consent",
+    prompt: "select_account",
   });
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
-export interface AdminSession {
-  accessToken:  string;
-  refreshToken: string;
-  expiryDate:   number;
-  adminEmail:   string;
-  adminName:    string;
-  sheetIds:     Record<string, string>;  // { lekki: "...", oniru: "..." }
-}
-
-/** Returns the sheet ID for a location, falling back to the first available. */
-export function getSessionSheetId(session: AdminSession, location?: string | null): string {
-  if (location && session.sheetIds[location]) return session.sheetIds[location];
-  return Object.values(session.sheetIds)[0] ?? "";
+export interface UserSession {
+  email:         string;
+  name:          string;
+  picture?:      string;
+  role?:         "admin" | "logger";  // undefined = pending role selection
+  locationId?:   string;              // set for loggers
+  locationName?: string;              // set for loggers
 }
 
 const COOKIE = "aql_session";
@@ -59,44 +48,30 @@ function unsign(signed: string): string | null {
   return sig === expected ? data : null;
 }
 
-export function encodeSession(s: AdminSession): string {
+export function encodeSession(s: UserSession): string {
   const payload = Buffer.from(JSON.stringify(s)).toString("base64url");
   return sign(payload);
 }
 
-export function decodeSession(cookie: string): AdminSession | null {
+export function decodeSession(cookie: string): UserSession | null {
   const payload = unsign(cookie);
   if (!payload) return null;
-  try { return JSON.parse(Buffer.from(payload, "base64url").toString()) as AdminSession; }
+  try { return JSON.parse(Buffer.from(payload, "base64url").toString()) as UserSession; }
   catch { return null; }
 }
 
-export function readSessionFromHeaders(headers: Headers): AdminSession | null {
+export function readSessionFromHeaders(headers: Headers): UserSession | null {
   const raw = headers.get("cookie") ?? "";
   const m   = raw.match(new RegExp(`(?:^|; )${COOKIE}=([^;]+)`));
   if (!m) return null;
   return decodeSession(decodeURIComponent(m[1]));
 }
 
-export function sessionCookieHeader(s: AdminSession): string {
+export function sessionCookieHeader(s: UserSession): string {
   const val = encodeURIComponent(encodeSession(s));
   return `${COOKIE}=${val}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${60 * 60 * 24 * 7}`;
 }
 
 export function clearCookieHeader(): string {
   return `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
-}
-
-// ── Authenticated clients ─────────────────────────────────────────────────────
-
-export function adminSheetsClient(s: AdminSession) {
-  const client = createOAuthClient();
-  client.setCredentials({ access_token: s.accessToken, refresh_token: s.refreshToken, expiry_date: s.expiryDate });
-  return google.sheets({ version: "v4", auth: client });
-}
-
-export function adminDriveClient(s: AdminSession) {
-  const client = createOAuthClient();
-  client.setCredentials({ access_token: s.accessToken, refresh_token: s.refreshToken, expiry_date: s.expiryDate });
-  return google.drive({ version: "v3", auth: client });
 }

@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import Link from "next/link";
-import { WATER_POINTS, TEMP_AREAS, CHECK_TIMES, getLocationName } from "@/lib/config";
+import { WATER_POINTS, TEMP_AREAS, CHECK_TIMES } from "@/lib/config";
 
 type LogType = "water" | "temperature";
-type Step    = "identity" | "validating" | "type" | "form" | "done";
+type Step    = "loading" | "type" | "form" | "done";
 
 // ── Push helpers ──────────────────────────────────────────────────────────────
 
@@ -71,22 +71,21 @@ const slide = {
 };
 
 export default function LogPage() {
-  const [step,    setStep]    = useState<Step>("identity");
+  const router = useRouter();
+  const [step,    setStep]    = useState<Step>("loading");
   const [logType, setLogType] = useState<LogType>("water");
 
-  // Identity
-  const [name,      setName]      = useState("");
-  const [email,     setEmail]     = useState("");
-  const [location,  setLocation]  = useState("");
-  const [authError, setAuthError] = useState("");
-  const [validating, setValidating] = useState(false);
+  // Identity (from session)
+  const [name,         setName]         = useState("");
+  const [email,        setEmail]        = useState("");
+  const [locationName, setLocationName] = useState("");
 
   // Push notifications
   const [pushState, setPushState] = useState<"idle" | "prompt" | "subscribed" | "denied">("idle");
 
   // Submission
-  const [submitting,  setSubmitting]  = useState(false);
-  const [lastStatus,  setLastStatus]  = useState<"OK" | "WARN" | "DANGER" | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [lastStatus, setLastStatus] = useState<"OK" | "WARN" | "DANGER" | null>(null);
 
   // Water form
   const [waterPoint,   setWaterPoint]   = useState(WATER_POINTS[0].id);
@@ -105,71 +104,31 @@ export default function LogPage() {
     }
   }, []);
 
-  // Restore from localStorage + check push permission
+  // Load identity from session
   useEffect(() => {
-    const savedName  = localStorage.getItem("aqualog-name");
-    const savedEmail = localStorage.getItem("aqualog-email");
-    const savedAuth  = localStorage.getItem("aqualog-authorized");
-    const savedLoc = localStorage.getItem("aqualog-location") ?? "";
-    if (savedName && savedEmail && savedAuth === "1") {
-      setName(savedName);
-      setEmail(savedEmail);
-      setLocation(savedLoc);
-      setStep("type");
-
-      // Check push state for returning loggers
-      if ("Notification" in window) {
-        if (Notification.permission === "granted") setPushState("subscribed");
-        else if (Notification.permission === "denied") setPushState("denied");
-        else if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) setPushState("prompt");
-      }
-    } else if (savedName) {
-      setName(savedName);
-    }
-  }, []);
-
-  async function verifyIdentity() {
-    if (!name.trim() || !email.trim()) return;
-    setValidating(true);
-    setAuthError("");
-    try {
-      const r = await fetch("/api/validate-logger", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
-      });
-      const json = await r.json() as { authorized: boolean; reason?: string; name?: string; location?: string };
-      if (json.authorized) {
-        const resolvedName = json.name ?? name.trim();
-        const resolvedLoc  = json.location ?? "lekki";
-        localStorage.setItem("aqualog-name",       resolvedName);
-        localStorage.setItem("aqualog-email",      email.trim().toLowerCase());
-        localStorage.setItem("aqualog-location",   resolvedLoc);
-        localStorage.setItem("aqualog-authorized", "1");
-        setName(resolvedName);
-        setLocation(resolvedLoc);
+    fetch("/api/auth/me")
+      .then(async r => {
+        if (!r.ok) { router.replace("/"); return; }
+        const u = await r.json() as { name: string; email: string; role?: string; locationId?: string; locationName?: string };
+        if (u.role !== "logger") { router.replace("/role"); return; }
+        setName(u.name);
+        setEmail(u.email);
+        setLocationName(u.locationName ?? "");
         setStep("type");
 
-        // Show push prompt for new loggers (if not already answered)
-        if ("Notification" in window && process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
+        if ("Notification" in window) {
           if (Notification.permission === "granted") setPushState("subscribed");
-          else if (Notification.permission !== "denied") setPushState("prompt");
+          else if (Notification.permission === "denied") setPushState("denied");
+          else if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) setPushState("prompt");
         }
-      } else {
-        setAuthError(json.reason ?? "Not authorized.");
-      }
-    } catch {
-      setAuthError("Network error. Please try again.");
-    } finally {
-      setValidating(false);
-    }
-  }
+      })
+      .catch(() => router.replace("/"));
+  }, [router]);
 
   async function enablePush() {
     const permission = await Notification.requestPermission();
     if (permission !== "granted") { setPushState("denied"); return; }
-    const savedEmail = localStorage.getItem("aqualog-email") ?? email;
-    const ok = await subscribeToPush(savedEmail, name);
+    const ok = await subscribeToPush(email, name);
     setPushState(ok ? "subscribed" : "denied");
   }
 
@@ -184,14 +143,13 @@ export default function LogPage() {
   async function submitLog() {
     setSubmitting(true);
     try {
-      const logEmail = localStorage.getItem("aqualog-email") ?? email;
-      const logLoc   = localStorage.getItem("aqualog-location") ?? location ?? "lekki";
       const body = logType === "water"
-        ? { type: "water",       logger: name, loggerEmail: logEmail, location: logLoc, meterPoint: waterPoint, reading: waterReading, unit: WATER_POINTS.find(p => p.id === waterPoint)?.unit ?? "", notes: waterNotes }
-        : { type: "temperature", logger: name, loggerEmail: logEmail, location: logLoc, area: tempArea, temperature: tempValue, notes: tempNotes };
+        ? { type: "water",       meterPoint: waterPoint, reading: waterReading, unit: WATER_POINTS.find(p => p.id === waterPoint)?.unit ?? "", notes: waterNotes }
+        : { type: "temperature", area: tempArea, temperature: tempValue, notes: tempNotes };
 
       const r    = await fetch("/api/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const json = await r.json();
+      const json = await r.json() as { ok?: boolean; status?: "OK" | "WARN" | "DANGER"; error?: string };
+      if (!r.ok) { alert(json.error ?? "Failed to save log."); return; }
       setLastStatus(json.status ?? null);
       setStep("done");
     } catch {
@@ -199,6 +157,11 @@ export default function LogPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.replace("/");
   }
 
   const selectedArea = TEMP_AREAS.find(a => a.id === tempArea);
@@ -216,9 +179,7 @@ export default function LogPage() {
           <div style={{ width: 28, height: 28, borderRadius: 8, background: "var(--brand)", color: "#080B10", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 }}>A</div>
           <div>
             <span style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--text-primary)", display: "block", lineHeight: 1.1 }}>AquaLog</span>
-            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>
-              {location ? getLocationName(location) : "Golden Tulip"}
-            </span>
+            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{locationName || "Golden Tulip"}</span>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
@@ -230,52 +191,10 @@ export default function LogPage() {
       <main style={{ maxWidth: 480, margin: "0 auto", padding: "1.5rem 1.25rem 5rem" }}>
         <AnimatePresence mode="wait">
 
-          {/* ── Identity + Email validation ── */}
-          {(step === "identity" || step === "validating") && (
-            <motion.div key="identity" {...slide}>
-              <div style={{ textAlign: "center", marginBottom: "2rem", paddingTop: "2rem" }}>
-                <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>👋</div>
-                <h1 style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.5rem" }}>Who&apos;s on duty?</h1>
-                <p style={{ color: "var(--text-secondary)", fontSize: "0.88rem" }}>Enter your details to start logging.</p>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
-                <div>
-                  <label style={{ fontSize: "0.78rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.35rem", fontWeight: 500 }}>Full Name</label>
-                  <input className="input-field" placeholder="e.g. Emeka Obi" value={name} onChange={e => setName(e.target.value)} autoFocus />
-                </div>
-                <div>
-                  <label style={{ fontSize: "0.78rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.35rem", fontWeight: 500 }}>Work Email</label>
-                  <input
-                    className="input-field"
-                    type="email"
-                    inputMode="email"
-                    placeholder="your.email@goldentulip.com"
-                    value={email}
-                    onChange={e => { setEmail(e.target.value); setAuthError(""); }}
-                    onKeyDown={e => e.key === "Enter" && verifyIdentity()}
-                  />
-                </div>
-
-                {authError && (
-                  <div style={{ background: "var(--danger-dim)", border: "1px solid var(--danger)", borderRadius: 10, padding: "0.75rem 1rem", fontSize: "0.82rem", color: "var(--danger)", lineHeight: 1.5 }}>
-                    🚫 {authError}
-                  </div>
-                )}
-
-                <button
-                  className="btn-primary"
-                  onClick={verifyIdentity}
-                  disabled={!name.trim() || !email.trim() || validating}
-                  style={{ marginTop: "0.25rem" }}
-                >
-                  {validating ? "Verifying…" : "Continue →"}
-                </button>
-
-                <p style={{ textAlign: "center", fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.5 }}>
-                  Only authorized staff can log. If you need access,<br />contact your hotel manager.
-                </p>
-              </div>
+          {/* ── Loading ── */}
+          {step === "loading" && (
+            <motion.div key="loading" {...slide} style={{ textAlign: "center", paddingTop: "4rem" }}>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Loading…</p>
             </motion.div>
           )}
 
@@ -285,20 +204,14 @@ export default function LogPage() {
               <div style={{ paddingTop: "1.5rem", marginBottom: "1.5rem" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div>
-                    <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.15rem" }}>Logged in as</p>
+                    <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.15rem" }}>Signed in as</p>
                     <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-primary)" }}>{name}</h2>
                   </div>
                   <button
-                    onClick={() => {
-                      localStorage.removeItem("aqualog-name");
-                      localStorage.removeItem("aqualog-email");
-                      localStorage.removeItem("aqualog-location");
-                      localStorage.removeItem("aqualog-authorized");
-                      setName(""); setEmail(""); setLocation(""); setStep("identity");
-                    }}
+                    onClick={signOut}
                     style={{ fontSize: "0.72rem", color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}
                   >
-                    Not you?
+                    Sign out
                   </button>
                 </div>
               </div>
@@ -309,27 +222,16 @@ export default function LogPage() {
                   <span style={{ fontSize: "1.2rem" }}>🔔</span>
                   <div style={{ flex: 1 }}>
                     <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--brand)", marginBottom: "0.1rem" }}>Get logging reminders</p>
-                    <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>We'll notify you when it's time to submit readings.</p>
+                    <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>We&apos;ll notify you when it&apos;s time to submit readings.</p>
                   </div>
-                  <button
-                    onClick={enablePush}
-                    style={{ fontSize: "0.75rem", fontWeight: 600, padding: "5px 12px", borderRadius: 8, background: "var(--brand)", color: "#080B10", border: "none", cursor: "pointer", flexShrink: 0 }}
-                  >
-                    Enable
-                  </button>
-                  <button
-                    onClick={() => setPushState("denied")}
-                    style={{ fontSize: "1rem", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", lineHeight: 1, flexShrink: 0 }}
-                    title="Dismiss"
-                  >
-                    ×
-                  </button>
+                  <button onClick={enablePush} style={{ fontSize: "0.75rem", fontWeight: 600, padding: "5px 12px", borderRadius: 8, background: "var(--brand)", color: "#080B10", border: "none", cursor: "pointer", flexShrink: 0 }}>Enable</button>
+                  <button onClick={() => setPushState("denied")} style={{ fontSize: "1rem", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", lineHeight: 1, flexShrink: 0 }} title="Dismiss">×</button>
                 </div>
               )}
               {pushState === "subscribed" && (
                 <div style={{ background: "var(--ok-dim)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 12, padding: "0.6rem 1rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span style={{ fontSize: "0.9rem" }}>✅</span>
-                  <p style={{ fontSize: "0.75rem", color: "var(--ok)" }}>Notifications enabled — you'll be reminded when it's time to log.</p>
+                  <p style={{ fontSize: "0.75rem", color: "var(--ok)" }}>Notifications enabled — you&apos;ll be reminded when it&apos;s time to log.</p>
                 </div>
               )}
 
@@ -416,7 +318,7 @@ export default function LogPage() {
 
                 <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem" }}>
                   <span>👤</span> {name} <span style={{ color: "var(--bg-border)" }}>·</span>
-                  <span style={{ color: "var(--brand)", fontSize: "0.72rem" }}>{email || localStorage.getItem("aqualog-email")}</span>
+                  <span style={{ color: "var(--brand)", fontSize: "0.72rem" }}>{email}</span>
                 </div>
 
                 <button className="btn-primary" onClick={submitLog}
@@ -447,7 +349,7 @@ export default function LogPage() {
                   ? "Temperature is outside the safe range. Notify your supervisor immediately."
                   : lastStatus === "WARN"
                   ? "Reading is near the boundary. Monitor closely and re-check at next shift."
-                  : "Your log has been recorded in the sheet."}
+                  : "Your log has been recorded successfully."}
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                 <button className="btn-primary" onClick={() => setStep("type")}>Log Another →</button>
@@ -468,18 +370,18 @@ export default function LogPage() {
 
       {/* Bottom nav */}
       <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, backgroundColor: "var(--bg-surface)", borderTop: "1px solid var(--bg-border)", padding: "0.875rem 1.5rem", display: "flex", justifyContent: "space-around" }}>
-        <Link href="/" style={{ textAlign: "center", textDecoration: "none" }}>
-          <div style={{ fontSize: "1.2rem" }}>⬡</div>
-          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Entry</div>
-        </Link>
+        <button onClick={signOut} style={{ textAlign: "center", background: "none", border: "none", cursor: "pointer" }}>
+          <div style={{ fontSize: "1.2rem" }}>←</div>
+          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Sign Out</div>
+        </button>
         <button onClick={() => setStep("type")} style={{ textAlign: "center", background: "none", border: "none", cursor: "pointer" }}>
           <div style={{ fontSize: "1.2rem" }}>📋</div>
           <div style={{ fontSize: "0.65rem", color: "var(--brand)", marginTop: "0.2rem", fontWeight: 500 }}>New Log</div>
         </button>
-        <Link href="/admin" style={{ textAlign: "center", textDecoration: "none" }}>
-          <div style={{ fontSize: "1.2rem" }}>🛡</div>
-          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Admin</div>
-        </Link>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: "1.2rem" }}>📍</div>
+          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>{locationName.replace("Golden Tulip ", "") || "—"}</div>
+        </div>
       </nav>
     </div>
   );

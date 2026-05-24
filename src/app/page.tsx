@@ -1,11 +1,7 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LOCATIONS } from "@/lib/config";
-
-type Screen = "role" | "logger-form" | "validating";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(true);
@@ -26,201 +22,73 @@ function ThemeToggle() {
   );
 }
 
-const slide = {
-  initial: { opacity: 0, y: 20 },
-  animate: { opacity: 1, y: 0, transition: { duration: 0.3 } },
-  exit:    { opacity: 0, y: -16, transition: { duration: 0.2 } },
-};
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+      <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z" fill="#34A853"/>
+      <path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+      <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+    </svg>
+  );
+}
 
-export default function EntryPage() {
+export default function HomePage() {
   const router = useRouter();
-  const [screen, setScreen]  = useState<Screen>("role");
-  const [name,   setName]    = useState("");
-  const [email,  setEmail]   = useState("");
-  const [error,  setError]   = useState("");
-  const [savedName, setSavedName] = useState<string | null>(null);
+  const error  = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("error")
+    : null;
 
+  // If user already has a valid session with a role, send them home
   useEffect(() => {
-    const n = localStorage.getItem("aqualog-name");
-    const e = localStorage.getItem("aqualog-email");
-    const a = localStorage.getItem("aqualog-authorized");
-    if (n) setSavedName(n);
-    if (n && e && a === "1") { setName(n); setEmail(e); }
-  }, []);
-
-  async function validateLogger() {
-    if (!name.trim() || !email.trim()) return;
-    setScreen("validating");
-    setError("");
-    try {
-      const r = await fetch("/api/validate-logger", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
+    fetch("/api/auth/me").then(r => {
+      if (!r.ok) return;
+      r.json().then((u: { role?: string }) => {
+        if (u.role === "admin")  router.replace("/admin");
+        if (u.role === "logger") router.replace("/log");
       });
-      const json = await r.json() as { authorized: boolean; name?: string; location?: string; reason?: string };
-      if (json.authorized && json.location) {
-        const resolvedName = json.name ?? name.trim();
-        localStorage.setItem("aqualog-name",       resolvedName);
-        localStorage.setItem("aqualog-email",      email.trim().toLowerCase());
-        localStorage.setItem("aqualog-location",   json.location);
-        localStorage.setItem("aqualog-authorized", "1");
-        router.push("/log");
-      } else {
-        setError(json.reason ?? "Not authorized.");
-        setScreen("logger-form");
-      }
-    } catch {
-      setError("Network error. Try again.");
-      setScreen("logger-form");
-    }
-  }
+    });
+  }, [router]);
 
   return (
     <div style={{ minHeight: "100dvh", backgroundColor: "var(--bg-base)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "1.5rem" }}>
       <ThemeToggle />
 
       {/* Logo */}
-      <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-        <div style={{ width: 60, height: 60, borderRadius: 18, background: "linear-gradient(135deg, #00D4AA 0%, #00A880 100%)", margin: "0 auto 0.875rem", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 32px rgba(0,212,170,0.25)" }}>
-          <svg width="30" height="30" viewBox="0 0 32 32" fill="none">
+      <div style={{ textAlign: "center", marginBottom: "2.5rem" }}>
+        <div style={{ width: 64, height: 64, borderRadius: 20, background: "linear-gradient(135deg, #00D4AA 0%, #00A880 100%)", margin: "0 auto 1rem", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 32px rgba(0,212,170,0.25)" }}>
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
             <path d="M16 4C16 4 8 14 8 19.5C8 24.2 11.6 28 16 28C20.4 28 24 24.2 24 19.5C24 14 16 4 16 4Z" fill="#080B10" fillOpacity="0.9"/>
             <rect x="19" y="6" width="3" height="12" rx="1.5" fill="#080B10" fillOpacity="0.6"/>
             <circle cx="20.5" cy="20" r="2.5" fill="#080B10" fillOpacity="0.6"/>
           </svg>
         </div>
-        <h1 style={{ fontSize: "1.6rem", fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.25rem" }}>AquaLog</h1>
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Golden Tulip Hotels · Utility Logging</p>
+        <h1 style={{ fontSize: "1.75rem", fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.3rem" }}>AquaLog</h1>
+        <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Golden Tulip Hotels · Utility Logging</p>
       </div>
 
-      <div style={{ width: "100%", maxWidth: 380 }}>
-        <AnimatePresence mode="wait">
+      <div style={{ width: "100%", maxWidth: 360 }}>
+        {error && (
+          <div style={{ background: "var(--danger-dim)", border: "1px solid var(--danger)", borderRadius: 10, padding: "0.75rem 1rem", fontSize: "0.8rem", color: "var(--danger)", marginBottom: "1rem", textAlign: "center" }}>
+            {error === "auth_failed" ? "Sign-in failed. Please try again." : "Something went wrong. Please try again."}
+          </div>
+        )}
 
-          {/* ── Role picker ── */}
-          {screen === "role" && (
-            <motion.div key="role" {...slide}>
-              <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.875rem", textAlign: "center" }}>
-                How are you signing in?
-              </p>
+        <div className="card" style={{ padding: "1.75rem" }}>
+          <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "1.5rem", lineHeight: 1.6, textAlign: "center" }}>
+            Sign in with your Google account to access your dashboard.
+          </p>
+          <button
+            onClick={() => { window.location.href = "/api/auth/google"; }}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.75rem", padding: "0.9rem", borderRadius: 10, background: "var(--bg-elevated)", border: "1.5px solid var(--bg-border)", color: "var(--text-primary)", fontWeight: 600, fontSize: "0.95rem", cursor: "pointer" }}
+          >
+            <GoogleIcon /> Sign in with Google
+          </button>
+        </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                {/* Logger */}
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  onClick={() => setScreen("logger-form")}
-                  style={{ display: "flex", alignItems: "center", gap: "1rem", background: "var(--bg-surface)", border: "1px solid var(--bg-border)", borderRadius: 16, padding: "1.25rem", cursor: "pointer", textAlign: "left", width: "100%" }}
-                >
-                  <div style={{ width: 50, height: 50, borderRadius: 14, background: "var(--brand-dim)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem", flexShrink: 0 }}>📋</div>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.95rem", marginBottom: "0.2rem" }}>
-                      I&apos;m a Logger
-                    </p>
-                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                      Submit water &amp; temperature readings
-                      {savedName && <span style={{ color: "var(--brand)" }}> · {savedName}</span>}
-                    </p>
-                  </div>
-                  <span style={{ color: "var(--text-muted)", fontSize: "1.2rem" }}>›</span>
-                </motion.button>
-
-                {/* Admin */}
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  onClick={() => { window.location.href = "/api/auth/google"; }}
-                  style={{ display: "flex", alignItems: "center", gap: "1rem", background: "var(--bg-surface)", border: "1px solid var(--bg-border)", borderRadius: 16, padding: "1.25rem", cursor: "pointer", textAlign: "left", width: "100%" }}
-                >
-                  <div style={{ width: 50, height: 50, borderRadius: 14, background: "rgba(239,68,68,.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem", flexShrink: 0 }}>🛡</div>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.95rem", marginBottom: "0.2rem" }}>
-                      I&apos;m an Admin
-                    </p>
-                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                      Manage logs, staff &amp; settings across locations
-                    </p>
-                  </div>
-                  <span style={{ color: "var(--text-muted)", fontSize: "1.2rem" }}>›</span>
-                </motion.button>
-              </div>
-
-              {/* Location chips (info only) */}
-              <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.5rem", justifyContent: "center", flexWrap: "wrap" }}>
-                {LOCATIONS.map(l => (
-                  <span key={l.id} style={{ fontSize: "0.72rem", padding: "3px 10px", borderRadius: 999, background: "var(--bg-elevated)", border: "1px solid var(--bg-border)", color: "var(--text-muted)" }}>
-                    📍 {l.name}
-                  </span>
-                ))}
-              </div>
-
-              <p style={{ textAlign: "center", marginTop: "2rem", fontSize: "0.68rem", color: "var(--text-muted)" }}>
-                AquaLog · Golden Tulip Hotels &amp; Resorts
-              </p>
-            </motion.div>
-          )}
-
-          {/* ── Logger sign-in form ── */}
-          {(screen === "logger-form" || screen === "validating") && (
-            <motion.div key="form" {...slide}>
-              <button
-                onClick={() => { setScreen("role"); setError(""); }}
-                style={{ fontSize: "0.82rem", color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.35rem" }}
-              >
-                ← Back
-              </button>
-
-              <div className="card" style={{ padding: "1.5rem" }}>
-                <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "1.125rem" }}>
-                  Sign in to continue logging
-                </p>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
-                  <div>
-                    <label style={{ fontSize: "0.78rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.35rem", fontWeight: 500 }}>Full Name</label>
-                    <input
-                      className="input-field"
-                      placeholder="e.g. Emeka Obi"
-                      value={name}
-                      onChange={e => { setName(e.target.value); setError(""); }}
-                      autoFocus
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: "0.78rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.35rem", fontWeight: 500 }}>Work Email</label>
-                    <input
-                      className="input-field"
-                      type="email"
-                      inputMode="email"
-                      placeholder="your.name@goldentulip.com"
-                      value={email}
-                      onChange={e => { setEmail(e.target.value); setError(""); }}
-                      onKeyDown={e => e.key === "Enter" && validateLogger()}
-                    />
-                  </div>
-
-                  {error && (
-                    <div style={{ background: "var(--danger-dim)", border: "1px solid var(--danger)", borderRadius: 10, padding: "0.75rem 1rem", fontSize: "0.8rem", color: "var(--danger)", lineHeight: 1.5 }}>
-                      🚫 {error}
-                    </div>
-                  )}
-
-                  <button
-                    className="btn-primary"
-                    onClick={validateLogger}
-                    disabled={screen === "validating" || !name.trim() || !email.trim()}
-                    style={{ marginTop: "0.25rem" }}
-                  >
-                    {screen === "validating" ? "Checking…" : "Continue →"}
-                  </button>
-                </div>
-              </div>
-
-              <p style={{ textAlign: "center", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "1rem", lineHeight: 1.5 }}>
-                Your location is detected automatically from your email.<br />
-                Not authorised? Contact your hotel manager.
-              </p>
-            </motion.div>
-          )}
-
-        </AnimatePresence>
+        <p style={{ textAlign: "center", marginTop: "2rem", fontSize: "0.7rem", color: "var(--text-muted)" }}>
+          AquaLog · Golden Tulip Hotels &amp; Resorts
+        </p>
       </div>
     </div>
   );

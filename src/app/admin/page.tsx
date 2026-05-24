@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import Link from "next/link";
-import { TEMP_AREAS, LOCATIONS, getLocationName } from "@/lib/config";
+import { TEMP_AREAS } from "@/lib/config";
+
+interface LocationRecord { id: string; name: string; sheetId: string; createdAt: string; }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,7 +37,7 @@ interface TempLog {
   status: "OK" | "WARN" | "DANGER"; notes: string;
 }
 type AnyLog = WaterLog | TempLog;
-type Tab = "overview" | "logs" | "staff" | "targets" | "notify";
+type Tab = "overview" | "logs" | "staff" | "targets" | "notify" | "locations";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -488,7 +489,7 @@ function StaffPanel({ staff, loading, onRefresh, location }: {
 
 // ── Targets Panel ─────────────────────────────────────────────────────────────
 
-function TargetsPanel({ loaded, onSaved, location }: { loaded: boolean; onSaved: (vals: Record<string, string>) => void; location: string }) {
+function TargetsPanel({ loaded, onSaved, location, locationLabel }: { loaded: boolean; onSaved: (vals: Record<string, string>) => void; location: string; locationLabel?: string }) {
   const [vals,   setVals]   = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [msg,    setMsg]    = useState<{ text: string; ok: boolean } | null>(null);
@@ -532,7 +533,7 @@ function TargetsPanel({ loaded, onSaved, location }: { loaded: boolean; onSaved:
     <div>
       <div className="card" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
         <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "1rem" }}>
-          Operational Targets — {getLocationName(location)}
+          Operational Targets — {locationLabel ?? location}
         </p>
         {Object.entries(TARGET_META).map(([key, meta]) => (
           <div key={key} style={{ marginBottom: "1.125rem" }}>
@@ -809,13 +810,102 @@ function NotificationsPanel({ location }: { location: string }) {
   );
 }
 
+// ── Locations Panel ───────────────────────────────────────────────────────────
+
+function LocationsPanel({ locations, onCreated }: { locations: LocationRecord[]; onCreated: () => void }) {
+  const [name,     setName]     = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error,    setError]    = useState("");
+  const [msg,      setMsg]      = useState("");
+
+  async function create() {
+    if (!name.trim()) return;
+    setCreating(true); setError(""); setMsg("");
+    try {
+      const r    = await fetch("/api/admin/locations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) });
+      const json = await r.json() as { ok?: boolean; error?: string; name?: string };
+      if (!r.ok) { setError(json.error ?? "Failed to create location."); }
+      else       { setMsg(`✓ "${json.name}" created — sheet is ready.`); setName(""); onCreated(); }
+    } catch { setError("Network error. Try again."); }
+    finally  { setCreating(false); }
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+        <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)" }}>Locations</h2>
+        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{locations.length} location{locations.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {/* Setup note */}
+      <div className="card" style={{ padding: "0.875rem 1rem", marginBottom: "1.25rem", borderColor: "rgba(0,212,170,0.25)", background: "rgba(0,212,170,0.04)" }}>
+        <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--brand)", marginBottom: "0.25rem" }}>📋 One-time setup required</p>
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
+          Create a Google Sheet, share it with your service account email (from <code style={{ fontSize: "0.68rem", background: "var(--bg-elevated)", padding: "1px 5px", borderRadius: 4 }}>GOOGLE_SERVICE_ACCOUNT_KEY</code>), then add its ID as <code style={{ fontSize: "0.68rem", background: "var(--bg-elevated)", padding: "1px 5px", borderRadius: 4 }}>MASTER_SHEET_ID</code> in Vercel environment variables. Once set, create new locations below — their sheets are auto-created.
+        </p>
+      </div>
+
+      {/* Add location */}
+      <div className="card" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
+        <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.875rem" }}>Add New Location</p>
+        <div style={{ display: "flex", gap: "0.625rem" }}>
+          <input
+            className="input-field"
+            placeholder="e.g. Golden Tulip Lekki"
+            value={name}
+            onChange={e => { setName(e.target.value); setError(""); setMsg(""); }}
+            onKeyDown={e => e.key === "Enter" && create()}
+            style={{ flex: 1 }}
+          />
+          <button
+            onClick={create}
+            disabled={creating || !name.trim()}
+            style={{ padding: "0.65rem 1.25rem", borderRadius: 8, background: "var(--brand)", color: "#080B10", border: "none", cursor: creating ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.85rem", opacity: creating ? 0.7 : 1, flexShrink: 0 }}
+          >
+            {creating ? "Creating…" : "Create"}
+          </button>
+        </div>
+        {error && <p style={{ marginTop: "0.5rem", fontSize: "0.78rem", color: "var(--danger)" }}>{error}</p>}
+        {msg   && <p style={{ marginTop: "0.5rem", fontSize: "0.78rem", color: "var(--ok)" }}>{msg}</p>}
+      </div>
+
+      {/* Location list */}
+      {locations.length === 0 ? (
+        <div className="card" style={{ padding: "2rem", textAlign: "center" }}>
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>No locations yet. Create your first one above.</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          {locations.map(loc => (
+            <div key={loc.id} className="card" style={{ padding: "1rem 1.125rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)", marginBottom: "0.2rem" }}>📍 {loc.name}</p>
+                <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace" }}>{loc.sheetId}</p>
+              </div>
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${loc.sheetId}/edit`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, background: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--bg-border)", textDecoration: "none", flexShrink: 0 }}
+              >
+                View Sheet ↗
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
   const [pageState,  setPageState]  = useState<"checking" | "unauthed" | "authed">("checking");
   const [stats,      setStats]      = useState<StatsData | null>(null);
   const [activeTab,  setActiveTab]  = useState<Tab>("overview");
-  const [activeLoc,  setActiveLoc]  = useState<string>(LOCATIONS[0].id);
+  const [activeLoc,  setActiveLoc]  = useState<string>("");
+  const [locations,  setLocations]  = useState<LocationRecord[]>([]);
 
   const [logs,       setLogs]       = useState<AnyLog[]>([]);
   const [logsLoaded, setLogsLoaded] = useState(false);
@@ -825,8 +915,20 @@ export default function AdminPage() {
   const [staffLoaded, setStaffLoaded] = useState(false);
   const [staffLoading,setStaffLoading]= useState(false);
 
+  const loadLocations = useCallback(async () => {
+    try {
+      const r = await fetch("/api/admin/locations");
+      if (r.status === 401) { setPageState("unauthed"); return; }
+      if (!r.ok) return;
+      const locs = await r.json() as LocationRecord[];
+      setLocations(locs);
+      if (locs.length > 0 && !activeLoc) setActiveLoc(locs[0].id);
+    } catch { /* ignore */ }
+  }, [activeLoc]);
+
   const loadStats = useCallback(async (loc?: string) => {
     const location = loc ?? activeLoc;
+    if (!location) return;
     try {
       const r = await fetch(`/api/admin/stats?location=${location}`);
       if (r.status === 401) { setPageState("unauthed"); return; }
@@ -836,7 +938,10 @@ export default function AdminPage() {
     } catch { setPageState("unauthed"); }
   }, [activeLoc]);
 
-  useEffect(() => { loadStats(); }, [loadStats]);
+  useEffect(() => {
+    loadLocations().then(() => loadStats());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchLogs = useCallback(async () => {
     if (logsLoading) return;
@@ -858,8 +963,9 @@ export default function AdminPage() {
 
   function switchTab(tab: Tab) {
     setActiveTab(tab);
-    if (tab === "logs"  && !logsLoaded)  fetchLogs();
-    if (tab === "staff" && !staffLoaded) fetchStaff();
+    if (tab === "logs"      && !logsLoaded)  fetchLogs();
+    if (tab === "staff"     && !staffLoaded) fetchStaff();
+    if (tab === "locations") loadLocations();
   }
 
   function switchLocation(loc: string) {
@@ -892,30 +998,18 @@ export default function AdminPage() {
   if (pageState === "unauthed") {
     return (
       <div style={{ minHeight: "100dvh", backgroundColor: "var(--bg-base)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem" }}>
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ width: "100%", maxWidth: 360 }}>
-          <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-            <div style={{ width: 56, height: 56, borderRadius: 16, background: "var(--brand)", color: "#080B10", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 24, margin: "0 auto 1rem" }}>
-              A
-            </div>
-            <h1 style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.25rem" }}>Admin Console</h1>
-            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>AquaLog · Golden Tulip Hotels</p>
-          </div>
-
-          <div className="card" style={{ padding: "1.5rem" }}>
-            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "1.25rem", lineHeight: 1.6 }}>
-              Sign in with the Google account that will own the hotel's log spreadsheet. Your sheet is created automatically on first sign-in.
-            </p>
-            <button
-              onClick={() => { window.location.href = "/api/auth/google"; }}
-              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.75rem", padding: "0.875rem", borderRadius: 10, background: "var(--bg-elevated)", border: "1.5px solid var(--bg-border)", color: "var(--text-primary)", fontWeight: 600, fontSize: "0.95rem", cursor: "pointer" }}
-            >
-              <GoogleIcon /> Sign in with Google
-            </button>
-          </div>
-
-          <div style={{ textAlign: "center", marginTop: "1.25rem" }}>
-            <Link href="/" style={{ fontSize: "0.8rem", color: "var(--text-muted)", textDecoration: "none" }}>← Back</Link>
-          </div>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ textAlign: "center", maxWidth: 340 }}>
+          <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>🔒</div>
+          <h1 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.5rem" }}>Session Expired</h1>
+          <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "1.5rem", lineHeight: 1.6 }}>
+            Your session has expired or you don't have access. Please sign in again.
+          </p>
+          <button
+            onClick={() => { window.location.href = "/"; }}
+            style={{ padding: "0.75rem 2rem", borderRadius: 10, background: "var(--brand)", color: "#080B10", border: "none", cursor: "pointer", fontWeight: 600, fontSize: "0.9rem" }}
+          >
+            Go to Sign In
+          </button>
         </motion.div>
       </div>
     );
@@ -924,11 +1018,12 @@ export default function AdminPage() {
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: "overview", label: "Overview"      },
-    { id: "logs",     label: "Logs"          },
-    { id: "staff",    label: "Staff"         },
-    { id: "targets",  label: "Targets"       },
-    { id: "notify",   label: "Notifications" },
+    { id: "overview",   label: "Overview"      },
+    { id: "logs",       label: "Logs"          },
+    { id: "staff",      label: "Staff"         },
+    { id: "targets",    label: "Targets"       },
+    { id: "notify",     label: "Notifications" },
+    { id: "locations",  label: "Locations"     },
   ];
 
   return (
@@ -946,17 +1041,19 @@ export default function AdminPage() {
           </span>
 
           {/* Location switcher */}
-          <div style={{ display: "flex", gap: "0.25rem", background: "var(--bg-elevated)", border: "1px solid var(--bg-border)", borderRadius: 8, padding: "2px" }}>
-            {LOCATIONS.map(l => (
-              <button
-                key={l.id}
-                onClick={() => switchLocation(l.id)}
-                style={{ fontSize: "0.7rem", fontWeight: activeLoc === l.id ? 600 : 400, padding: "3px 10px", borderRadius: 6, background: activeLoc === l.id ? "var(--brand)" : "transparent", color: activeLoc === l.id ? "#080B10" : "var(--text-muted)", border: "none", cursor: "pointer", transition: "all 150ms" }}
-              >
-                {l.name.replace("Golden Tulip ", "")}
-              </button>
-            ))}
-          </div>
+          {locations.length > 0 && (
+            <div style={{ display: "flex", gap: "0.25rem", background: "var(--bg-elevated)", border: "1px solid var(--bg-border)", borderRadius: 8, padding: "2px" }}>
+              {locations.map(l => (
+                <button
+                  key={l.id}
+                  onClick={() => switchLocation(l.id)}
+                  style={{ fontSize: "0.7rem", fontWeight: activeLoc === l.id ? 600 : 400, padding: "3px 10px", borderRadius: 6, background: activeLoc === l.id ? "var(--brand)" : "transparent", color: activeLoc === l.id ? "#080B10" : "var(--text-muted)", border: "none", cursor: "pointer", transition: "all 150ms" }}
+                >
+                  {l.name.replace("Golden Tulip ", "")}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
           <ThemeToggle />
@@ -1011,10 +1108,17 @@ export default function AdminPage() {
             loaded={true}
             onSaved={() => loadStats()}
             location={activeLoc}
+            locationLabel={locations.find(l => l.id === activeLoc)?.name}
           />
         )}
         {activeTab === "notify" && (
           <NotificationsPanel location={activeLoc} />
+        )}
+        {activeTab === "locations" && (
+          <LocationsPanel
+            locations={locations}
+            onCreated={() => { loadLocations(); }}
+          />
         )}
       </main>
     </div>

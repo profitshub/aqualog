@@ -1,24 +1,11 @@
-// ── Locations ─────────────────────────────────────────────────────────────────
+// ── Admin access ──────────────────────────────────────────────────────────────
 
-export const LOCATIONS = [
-  { id: "lekki", name: "Golden Tulip Lekki", sheetEnvKey: "SHEET_ID_LEKKI" },
-  { id: "oniru", name: "Golden Tulip Oniru", sheetEnvKey: "SHEET_ID_ONIRU" },
-] as const;
-
-export type LocationId = "lekki" | "oniru";
-
-export function getLocationName(id: string): string {
-  return LOCATIONS.find(l => l.id === id)?.name ?? id;
+export function getAdminEmails(): string[] {
+  return (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map(e => e.trim().toLowerCase())
+    .filter(Boolean);
 }
-
-export function getSheetIdForLocation(locationId: string): string {
-  const loc = LOCATIONS.find(l => l.id === locationId);
-  return (loc ? process.env[loc.sheetEnvKey] : undefined) ?? process.env.GOOGLE_SHEET_ID ?? "";
-}
-
-// Legacy — kept so any missed references don't break
-export const HOTEL_NAME = "Golden Tulip";
-export const LOCATION   = "Golden Tulip Lekki";
 
 // ── Log points / areas ────────────────────────────────────────────────────────
 

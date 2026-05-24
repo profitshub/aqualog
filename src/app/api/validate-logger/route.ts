@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readStaff } from "@/lib/sheets";
-import { LOCATIONS, getSheetIdForLocation } from "@/lib/config";
+import { readStaff, getLocations } from "@/lib/sheets";
 
+// Kept for backwards compatibility — new flow uses /api/auth/select-role
 export async function POST(req: NextRequest) {
   const { email } = await req.json() as { email: string };
   if (!email?.trim()) {
@@ -9,13 +9,16 @@ export async function POST(req: NextRequest) {
   }
 
   const normalised = email.trim().toLowerCase();
+  const locations  = await getLocations();
 
-  // Check every location's sheet — first match wins
-  for (const loc of LOCATIONS) {
-    const sid = getSheetIdForLocation(loc.id);
-    if (!sid) continue;
+  if (locations.length === 0) {
+    return NextResponse.json({ authorized: false, reason: "No locations configured. Contact admin." });
+  }
+
+  for (const loc of locations) {
+    if (!loc.sheetId) continue;
     try {
-      const staff  = await readStaff(loc.name, sid);
+      const staff  = await readStaff(loc.name, loc.sheetId);
       const member = staff.find(s => s.email.toLowerCase() === normalised);
       if (member) {
         if (!member.active) {
@@ -26,9 +29,5 @@ export async function POST(req: NextRequest) {
     } catch { continue; }
   }
 
-  const anyConfigured = LOCATIONS.some(l => !!getSheetIdForLocation(l.id));
-  if (!anyConfigured) {
-    return NextResponse.json({ authorized: false, reason: "System not yet configured. Ask admin to set sheet IDs." });
-  }
   return NextResponse.json({ authorized: false, reason: "Email not recognised. Contact your manager to be added." });
 }

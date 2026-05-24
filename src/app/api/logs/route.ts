@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readSessionFromHeaders, getSessionSheetId } from "@/lib/google-auth";
-import { readRows, TABS } from "@/lib/sheets";
+import { readSessionFromHeaders } from "@/lib/google-auth";
+import { readRows, TABS, getSheetIdForLocation } from "@/lib/sheets";
 
 export async function GET(req: NextRequest) {
   const session = readSessionFromHeaders(req.headers);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session || session.role !== "admin") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-  const sid = getSessionSheetId(session, req.nextUrl.searchParams.get("location"));
+  const location = req.nextUrl.searchParams.get("location") ?? "";
+  const sid      = await getSheetIdForLocation(location);
 
   const [waterRows, tempRows] = await Promise.all([
     readRows(TABS.water, sid),

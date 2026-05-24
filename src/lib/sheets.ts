@@ -11,9 +11,117 @@ export function getSheetsClient() {
   return google.sheets({ version: "v4", auth: serviceAccount() });
 }
 
-// Spreadsheet ID: admin's sheet (shared with service account after OAuth setup)
+// Legacy single-sheet ID (kept for backwards compat)
 export function sheetId(): string {
   return process.env.GOOGLE_SHEET_ID ?? "";
+}
+
+// ── Location registry (stored in master sheet) ────────────────────────────────
+
+export interface LocationRecord {
+  id:        string;
+  name:      string;
+  sheetId:   string;
+  createdAt: string;
+}
+
+const MASTER_TABS = { locations: "Locations" };
+
+function masterSheetId(): string {
+  return process.env.MASTER_SHEET_ID ?? "";
+}
+
+// In-memory cache (resets on cold start)
+let _locCache: { data: LocationRecord[]; ts: number } | null = null;
+
+export function invalidateLocationsCache() { _locCache = null; }
+
+export async function getLocations(): Promise<LocationRecord[]> {
+  if (_locCache && Date.now() - _locCache.ts < 3 * 60_000) return _locCache.data;
+  const data = await readLocations();
+  _locCache = { data, ts: Date.now() };
+  return data;
+}
+
+export async function readLocations(): Promise<LocationRecord[]> {
+  const mid = masterSheetId();
+  if (!mid) return [];
+  try {
+    const rows = await readRows(MASTER_TABS.locations, mid);
+    return rows.filter(r => r[0] && r[2]).map(r => ({
+      id:        r[0],
+      name:      r[1] ?? r[0],
+      sheetId:   r[2],
+      createdAt: r[3] ?? "",
+    }));
+  } catch { return []; }
+}
+
+export async function saveLocation(id: string, name: string, sid: string): Promise<void> {
+  const mid = masterSheetId();
+  if (!mid) throw new Error("MASTER_SHEET_ID env var not set");
+  await appendRow(MASTER_TABS.locations, [id, name, sid, new Date().toISOString()], mid);
+  invalidateLocationsCache();
+}
+
+export async function getSheetIdForLocation(locationId: string): Promise<string> {
+  const locs = await getLocations();
+  return locs.find(l => l.id === locationId)?.sheetId ?? "";
+}
+
+export async function getLocationName(locationId: string): Promise<string> {
+  const locs = await getLocations();
+  return locs.find(l => l.id === locationId)?.name ?? locationId;
+}
+
+// ── Create a new location sheet ───────────────────────────────────────────────
+
+const LOCATION_SHEET_TABS = [
+  { name: "Water Logs",     headers: ["Timestamp","Date","Time","Logger","Logger Email","Location","Meter Point","Reading","Unit","Notes"] },
+  { name: "Temp Logs",      headers: ["Timestamp","Date","Time","Logger","Logger Email","Location","Area","Temperature (°C)","Min (°C)","Max (°C)","Status","Notes"] },
+  { name: "Staff",          headers: ["Email","Name","Location","Added By","Added Date","Active"] },
+  { name: "Targets",        headers: ["Metric","Value","Unit","Location","Period","Notes"] },
+  { name: "Subscriptions",  headers: ["Email","Name","Subscription JSON","Endpoint","Created At","Active"] },
+];
+
+export async function createLocationSheet(locationName: string): Promise<string> {
+  const sheets = getSheetsClient();
+
+  const created = await sheets.spreadsheets.create({
+    requestBody: {
+      properties: { title: `AquaLog — ${locationName}` },
+      sheets: LOCATION_SHEET_TABS.map(t => ({
+        properties: { title: t.name, gridProperties: { frozenRowCount: 1 } },
+      })),
+    },
+  });
+  const id = created.data.spreadsheetId!;
+
+  // Write headers
+  await Promise.all(LOCATION_SHEET_TABS.map(t =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId: id,
+      range: `'${t.name}'!A1:${String.fromCharCode(64 + t.headers.length)}1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [t.headers] },
+    })
+  ));
+
+  // Seed default targets
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: id,
+    range: "'Targets'!A2",
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [
+        ["daily_water_limit",        "50",  "m³",    locationName, "daily", "Max daily water consumption"],
+        ["temp_compliance_rate",     "100", "%",     locationName, "daily", "% of temp readings within safe range"],
+        ["checks_per_area_per_day",  "3",   "count", locationName, "daily", "Required logging frequency per monitored area"],
+      ],
+    },
+  });
+
+  return id;
 }
 
 export const TABS = {
