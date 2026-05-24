@@ -4,16 +4,14 @@ import {
   createOAuthClient, adminSheetsClient, adminDriveClient,
   sessionCookieHeader, type AdminSession,
 } from "@/lib/google-auth";
-import { HOTEL_NAME, LOCATION } from "@/lib/config";
+import { LOCATIONS } from "@/lib/config";
 
-// Service account email — used to share the sheet so loggers can write logs
 const SA_EMAIL = (() => {
   try { return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!).client_email as string; }
   catch { return null; }
 })();
 
-// All tabs that AquaLog needs in the spreadsheet
-const TABS = [
+const SHEET_TABS = [
   {
     name: "Water Logs",
     headers: ["Timestamp","Date","Time","Logger","Logger Email","Location","Meter Point","Reading","Unit","Notes"],
@@ -36,45 +34,48 @@ const TABS = [
   },
 ];
 
-const DEFAULT_TARGETS = [
-  ["daily_water_limit",       "50",  "m³",   LOCATION, "daily",  "Max daily water consumption"],
-  ["temp_compliance_rate",    "100", "%",    LOCATION, "daily",  "% of temp readings within safe range"],
-  ["checks_per_area_per_day", "3",   "count",LOCATION, "daily",  "Required logging frequency per monitored area"],
+const DEFAULT_TARGETS = (locationName: string) => [
+  ["daily_water_limit",       "50",  "m³",   locationName, "daily", "Max daily water consumption"],
+  ["temp_compliance_rate",    "100", "%",    locationName, "daily", "% of temp readings within safe range"],
+  ["checks_per_area_per_day", "3",   "count",locationName, "daily", "Required logging frequency per monitored area"],
 ];
 
-async function findOrCreateSpreadsheet(session: AdminSession): Promise<string> {
+async function ensureLocationSheet(
+  session: AdminSession,
+  locationName: string
+): Promise<string> {
   const sheets = adminSheetsClient(session);
   const drive  = adminDriveClient(session);
-  const title  = `AquaLog — ${HOTEL_NAME}`;
+  const title  = `AquaLog — ${locationName}`;
 
-  // Look for existing sheet owned by this admin
+  // Find existing sheet
   const search = await drive.files.list({
     q: `name = '${title}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
     fields: "files(id)",
   });
   if (search.data.files?.length) return search.data.files[0].id!;
 
-  // Create fresh spreadsheet with first tab
+  // Create spreadsheet with first tab
   const created = await sheets.spreadsheets.create({
     requestBody: {
       properties: { title },
-      sheets: [{ properties: { title: TABS[0].name, gridProperties: { frozenRowCount: 1 } } }],
+      sheets: [{ properties: { title: SHEET_TABS[0].name, gridProperties: { frozenRowCount: 1 } } }],
     },
   });
   const id = created.data.spreadsheetId!;
 
-  // Add remaining tabs in one batch
+  // Add remaining tabs
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: id,
     requestBody: {
-      requests: TABS.slice(1).map(t => ({
+      requests: SHEET_TABS.slice(1).map(t => ({
         addSheet: { properties: { title: t.name, gridProperties: { frozenRowCount: 1 } } },
       })),
     },
   });
 
-  // Write headers for all tabs
-  await Promise.all(TABS.map(t =>
+  // Write headers
+  await Promise.all(SHEET_TABS.map(t =>
     sheets.spreadsheets.values.update({
       spreadsheetId: id,
       range: `'${t.name}'!A1:${String.fromCharCode(64 + t.headers.length)}1`,
@@ -88,10 +89,10 @@ async function findOrCreateSpreadsheet(session: AdminSession): Promise<string> {
     spreadsheetId: id,
     range: "'Targets'!A2",
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: DEFAULT_TARGETS },
+    requestBody: { values: DEFAULT_TARGETS(locationName) },
   });
 
-  // Share with service account so logger writes work without admin session
+  // Share with service account
   if (SA_EMAIL) {
     await drive.permissions.create({
       fileId: id,
@@ -116,15 +117,18 @@ export async function GET(req: NextRequest) {
     const { data: info } = await oauth2.userinfo.get();
 
     const session: AdminSession = {
-      accessToken:   tokens.access_token!,
-      refreshToken:  tokens.refresh_token ?? "",
-      expiryDate:    tokens.expiry_date ?? Date.now() + 3600_000,
-      spreadsheetId: "",
-      adminEmail:    info.email!,
-      adminName:     info.name ?? info.email!,
+      accessToken:  tokens.access_token!,
+      refreshToken: tokens.refresh_token ?? "",
+      expiryDate:   tokens.expiry_date ?? Date.now() + 3600_000,
+      adminEmail:   info.email!,
+      adminName:    info.name ?? info.email!,
+      sheetIds:     {},
     };
 
-    session.spreadsheetId = await findOrCreateSpreadsheet(session);
+    // Create or find sheet for every location
+    for (const loc of LOCATIONS) {
+      session.sheetIds[loc.id] = await ensureLocationSheet(session, loc.name);
+    }
 
     const res = NextResponse.redirect(new URL("/admin", req.url));
     res.headers.set("Set-Cookie", sessionCookieHeader(session));

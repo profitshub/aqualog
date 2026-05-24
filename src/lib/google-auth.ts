@@ -28,12 +28,18 @@ export function getAuthUrl(): string {
 // ── Session ───────────────────────────────────────────────────────────────────
 
 export interface AdminSession {
-  accessToken:   string;
-  refreshToken:  string;
-  expiryDate:    number;
-  spreadsheetId: string;
-  adminEmail:    string;
-  adminName:     string;
+  accessToken:  string;
+  refreshToken: string;
+  expiryDate:   number;
+  adminEmail:   string;
+  adminName:    string;
+  sheetIds:     Record<string, string>;  // { lekki: "...", oniru: "..." }
+}
+
+/** Returns the sheet ID for a location, falling back to the first available. */
+export function getSessionSheetId(session: AdminSession, location?: string | null): string {
+  if (location && session.sheetIds[location]) return session.sheetIds[location];
+  return Object.values(session.sheetIds)[0] ?? "";
 }
 
 const COOKIE = "aql_session";

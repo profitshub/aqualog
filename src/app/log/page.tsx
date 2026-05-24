@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { WATER_POINTS, TEMP_AREAS, CHECK_TIMES, HOTEL_NAME } from "@/lib/config";
+import { WATER_POINTS, TEMP_AREAS, CHECK_TIMES, getLocationName } from "@/lib/config";
 
 type LogType = "water" | "temperature";
 type Step    = "identity" | "validating" | "type" | "form" | "done";
@@ -77,6 +77,7 @@ export default function LogPage() {
   // Identity
   const [name,      setName]      = useState("");
   const [email,     setEmail]     = useState("");
+  const [location,  setLocation]  = useState("");
   const [authError, setAuthError] = useState("");
   const [validating, setValidating] = useState(false);
 
@@ -109,9 +110,11 @@ export default function LogPage() {
     const savedName  = localStorage.getItem("aqualog-name");
     const savedEmail = localStorage.getItem("aqualog-email");
     const savedAuth  = localStorage.getItem("aqualog-authorized");
+    const savedLoc = localStorage.getItem("aqualog-location") ?? "";
     if (savedName && savedEmail && savedAuth === "1") {
       setName(savedName);
       setEmail(savedEmail);
+      setLocation(savedLoc);
       setStep("type");
 
       // Check push state for returning loggers
@@ -135,13 +138,16 @@ export default function LogPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim() }),
       });
-      const json = await r.json() as { authorized: boolean; reason?: string; name?: string };
+      const json = await r.json() as { authorized: boolean; reason?: string; name?: string; location?: string };
       if (json.authorized) {
         const resolvedName = json.name ?? name.trim();
+        const resolvedLoc  = json.location ?? "lekki";
         localStorage.setItem("aqualog-name",       resolvedName);
         localStorage.setItem("aqualog-email",      email.trim().toLowerCase());
+        localStorage.setItem("aqualog-location",   resolvedLoc);
         localStorage.setItem("aqualog-authorized", "1");
         setName(resolvedName);
+        setLocation(resolvedLoc);
         setStep("type");
 
         // Show push prompt for new loggers (if not already answered)
@@ -179,9 +185,10 @@ export default function LogPage() {
     setSubmitting(true);
     try {
       const logEmail = localStorage.getItem("aqualog-email") ?? email;
+      const logLoc   = localStorage.getItem("aqualog-location") ?? location ?? "lekki";
       const body = logType === "water"
-        ? { type: "water",       logger: name, loggerEmail: logEmail, meterPoint: waterPoint, reading: waterReading, unit: WATER_POINTS.find(p => p.id === waterPoint)?.unit ?? "", notes: waterNotes }
-        : { type: "temperature", logger: name, loggerEmail: logEmail, area: tempArea, temperature: tempValue, notes: tempNotes };
+        ? { type: "water",       logger: name, loggerEmail: logEmail, location: logLoc, meterPoint: waterPoint, reading: waterReading, unit: WATER_POINTS.find(p => p.id === waterPoint)?.unit ?? "", notes: waterNotes }
+        : { type: "temperature", logger: name, loggerEmail: logEmail, location: logLoc, area: tempArea, temperature: tempValue, notes: tempNotes };
 
       const r    = await fetch("/api/log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const json = await r.json();
@@ -209,7 +216,9 @@ export default function LogPage() {
           <div style={{ width: 28, height: 28, borderRadius: 8, background: "var(--brand)", color: "#080B10", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 }}>A</div>
           <div>
             <span style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--text-primary)", display: "block", lineHeight: 1.1 }}>AquaLog</span>
-            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{HOTEL_NAME}</span>
+            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>
+              {location ? getLocationName(location) : "Golden Tulip"}
+            </span>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
@@ -283,8 +292,9 @@ export default function LogPage() {
                     onClick={() => {
                       localStorage.removeItem("aqualog-name");
                       localStorage.removeItem("aqualog-email");
+                      localStorage.removeItem("aqualog-location");
                       localStorage.removeItem("aqualog-authorized");
-                      setName(""); setEmail(""); setStep("identity");
+                      setName(""); setEmail(""); setLocation(""); setStep("identity");
                     }}
                     style={{ fontSize: "0.72rem", color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}
                   >

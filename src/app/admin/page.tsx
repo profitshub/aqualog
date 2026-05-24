@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { TEMP_AREAS, HOTEL_NAME } from "@/lib/config";
+import { TEMP_AREAS, LOCATIONS, getLocationName } from "@/lib/config";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -368,9 +368,8 @@ function LogsPanel({ logs, loading, onRefresh }: { logs: AnyLog[]; loading: bool
 
 // ── Staff Panel ───────────────────────────────────────────────────────────────
 
-function StaffPanel({ staff, loading, onRefresh }: {
-  staff: StaffMember[]; loading: boolean;
-  onRefresh: () => void;
+function StaffPanel({ staff, loading, onRefresh, location }: {
+  staff: StaffMember[]; loading: boolean; onRefresh: () => void; location: string;
 }) {
   const [email, setEmail] = useState("");
   const [name,  setName]  = useState("");
@@ -381,7 +380,7 @@ function StaffPanel({ staff, loading, onRefresh }: {
     if (!email.trim() || !name.trim()) return;
     setBusy(true); setMsg(null);
     try {
-      const r = await fetch("/api/admin/loggers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email.trim().toLowerCase(), name: name.trim() }) });
+      const r = await fetch(`/api/admin/loggers?location=${location}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email.trim().toLowerCase(), name: name.trim() }) });
       if (!r.ok) throw new Error((await r.json()).error ?? "Error");
       setMsg({ text: `${name} added as an authorized logger.`, ok: true });
       setEmail(""); setName("");
@@ -395,7 +394,7 @@ function StaffPanel({ staff, loading, onRefresh }: {
     if (!confirm(`Deactivate ${memberEmail}?`)) return;
     setBusy(true);
     try {
-      await fetch("/api/admin/loggers", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: memberEmail }) });
+      await fetch(`/api/admin/loggers?location=${location}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: memberEmail }) });
       onRefresh();
     } finally { setBusy(false); }
   }
@@ -489,15 +488,19 @@ function StaffPanel({ staff, loading, onRefresh }: {
 
 // ── Targets Panel ─────────────────────────────────────────────────────────────
 
-function TargetsPanel({ loaded, onSaved }: { loaded: boolean; onSaved: (vals: Record<string, string>) => void }) {
+function TargetsPanel({ loaded, onSaved, location }: { loaded: boolean; onSaved: (vals: Record<string, string>) => void; location: string }) {
   const [vals,   setVals]   = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [msg,    setMsg]    = useState<{ text: string; ok: boolean } | null>(null);
   const [inited, setInited] = useState(false);
 
   useEffect(() => {
+    setInited(false);
+  }, [location]);
+
+  useEffect(() => {
     if (!inited) {
-      fetch("/api/admin/targets")
+      fetch(`/api/admin/targets?location=${location}`)
         .then(r => r.json())
         .then((data: Target[]) => {
           const v: Record<string, string> = {};
@@ -512,7 +515,7 @@ function TargetsPanel({ loaded, onSaved }: { loaded: boolean; onSaved: (vals: Re
     setSaving(true); setMsg(null);
     try {
       const updates = Object.entries(vals).map(([metric, value]) => ({ metric, value: parseFloat(value) || 0 }));
-      const r = await fetch("/api/admin/targets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+      const r = await fetch(`/api/admin/targets?location=${location}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
       if (!r.ok) throw new Error("Failed to save");
       setMsg({ text: "Targets saved successfully.", ok: true });
       onSaved(vals);
@@ -529,7 +532,7 @@ function TargetsPanel({ loaded, onSaved }: { loaded: boolean; onSaved: (vals: Re
     <div>
       <div className="card" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
         <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "1rem" }}>
-          Operational Targets — {HOTEL_NAME}
+          Operational Targets — {getLocationName(location)}
         </p>
         {Object.entries(TARGET_META).map(([key, meta]) => (
           <div key={key} style={{ marginBottom: "1.125rem" }}>
@@ -580,7 +583,7 @@ interface NotifyData {
   subscribers: { email: string; name: string; createdAt: string }[];
 }
 
-function NotificationsPanel() {
+function NotificationsPanel({ location }: { location: string }) {
   const [data,    setData]    = useState<NotifyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
@@ -592,7 +595,7 @@ function NotificationsPanel() {
   const vapidConfigured = !!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
   useEffect(() => {
-    fetch("/api/admin/notify")
+    fetch(`/api/admin/notify?location=${location}`)
       .then(r => r.json())
       .then((d: NotifyData) => {
         setData(d);
@@ -614,7 +617,7 @@ function NotificationsPanel() {
   async function save() {
     setSaving(true); setMsg(null);
     try {
-      const r = await fetch("/api/admin/notify", {
+      const r = await fetch(`/api/admin/notify?location=${location}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled, times: times.filter(Boolean), message }),
@@ -631,7 +634,7 @@ function NotificationsPanel() {
     if (!confirm(`Send a test notification to all ${data?.subscriberCount ?? 0} subscriber(s) now?`)) return;
     setSending(true); setMsg(null);
     try {
-      const r = await fetch("/api/admin/notify", {
+      const r = await fetch(`/api/admin/notify?location=${location}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message }),
@@ -809,9 +812,10 @@ function NotificationsPanel() {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
-  const [pageState, setPageState] = useState<"checking" | "unauthed" | "authed">("checking");
-  const [stats,     setStats]     = useState<StatsData | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [pageState,  setPageState]  = useState<"checking" | "unauthed" | "authed">("checking");
+  const [stats,      setStats]      = useState<StatsData | null>(null);
+  const [activeTab,  setActiveTab]  = useState<Tab>("overview");
+  const [activeLoc,  setActiveLoc]  = useState<string>(LOCATIONS[0].id);
 
   const [logs,       setLogs]       = useState<AnyLog[]>([]);
   const [logsLoaded, setLogsLoaded] = useState(false);
@@ -821,15 +825,16 @@ export default function AdminPage() {
   const [staffLoaded, setStaffLoaded] = useState(false);
   const [staffLoading,setStaffLoading]= useState(false);
 
-  const loadStats = useCallback(async () => {
+  const loadStats = useCallback(async (loc?: string) => {
+    const location = loc ?? activeLoc;
     try {
-      const r = await fetch("/api/admin/stats");
+      const r = await fetch(`/api/admin/stats?location=${location}`);
       if (r.status === 401) { setPageState("unauthed"); return; }
       if (!r.ok) throw new Error();
       setStats(await r.json());
       setPageState("authed");
     } catch { setPageState("unauthed"); }
-  }, []);
+  }, [activeLoc]);
 
   useEffect(() => { loadStats(); }, [loadStats]);
 
@@ -837,24 +842,33 @@ export default function AdminPage() {
     if (logsLoading) return;
     setLogsLoading(true);
     try {
-      const r = await fetch("/api/logs");
+      const r = await fetch(`/api/logs?location=${activeLoc}`);
       if (r.ok) { setLogs((await r.json()).all ?? []); setLogsLoaded(true); }
     } finally { setLogsLoading(false); }
-  }, [logsLoading]);
+  }, [logsLoading, activeLoc]);
 
   const fetchStaff = useCallback(async () => {
     if (staffLoading) return;
     setStaffLoading(true);
     try {
-      const r = await fetch("/api/admin/loggers");
+      const r = await fetch(`/api/admin/loggers?location=${activeLoc}`);
       if (r.ok) { setStaff(await r.json()); setStaffLoaded(true); }
     } finally { setStaffLoading(false); }
-  }, [staffLoading]);
+  }, [staffLoading, activeLoc]);
 
   function switchTab(tab: Tab) {
     setActiveTab(tab);
     if (tab === "logs"  && !logsLoaded)  fetchLogs();
     if (tab === "staff" && !staffLoaded) fetchStaff();
+  }
+
+  function switchLocation(loc: string) {
+    setActiveLoc(loc);
+    setActiveTab("overview");
+    setStats(null);
+    setLogs([]); setLogsLoaded(false);
+    setStaff([]); setStaffLoaded(false);
+    loadStats(loc);
   }
 
   async function signOut() {
@@ -884,7 +898,7 @@ export default function AdminPage() {
               A
             </div>
             <h1 style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.25rem" }}>Admin Console</h1>
-            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>AquaLog · {HOTEL_NAME}</p>
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>AquaLog · Golden Tulip Hotels</p>
           </div>
 
           <div className="card" style={{ padding: "1.5rem" }}>
@@ -925,11 +939,24 @@ export default function AdminPage() {
           <div style={{ width: 28, height: 28, borderRadius: 8, background: "var(--brand)", color: "#080B10", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 }}>A</div>
           <div>
             <span style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--text-primary)", display: "block", lineHeight: 1.1 }}>AquaLog</span>
-            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{HOTEL_NAME}</span>
+            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>Golden Tulip Hotels</span>
           </div>
           <span style={{ fontSize: "0.65rem", fontWeight: 500, padding: "2px 8px", borderRadius: 999, background: "rgba(239,68,68,.15)", color: "#EF4444", border: "1px solid rgba(239,68,68,.3)" }}>
             Admin
           </span>
+
+          {/* Location switcher */}
+          <div style={{ display: "flex", gap: "0.25rem", background: "var(--bg-elevated)", border: "1px solid var(--bg-border)", borderRadius: 8, padding: "2px" }}>
+            {LOCATIONS.map(l => (
+              <button
+                key={l.id}
+                onClick={() => switchLocation(l.id)}
+                style={{ fontSize: "0.7rem", fontWeight: activeLoc === l.id ? 600 : 400, padding: "3px 10px", borderRadius: 6, background: activeLoc === l.id ? "var(--brand)" : "transparent", color: activeLoc === l.id ? "#080B10" : "var(--text-muted)", border: "none", cursor: "pointer", transition: "all 150ms" }}
+              >
+                {l.name.replace("Golden Tulip ", "")}
+              </button>
+            ))}
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
           <ThemeToggle />
@@ -976,16 +1003,18 @@ export default function AdminPage() {
             staff={staff}
             loading={staffLoading}
             onRefresh={() => { setStaffLoaded(false); fetchStaff(); }}
+            location={activeLoc}
           />
         )}
         {activeTab === "targets" && (
           <TargetsPanel
             loaded={true}
             onSaved={() => loadStats()}
+            location={activeLoc}
           />
         )}
         {activeTab === "notify" && (
-          <NotificationsPanel />
+          <NotificationsPanel location={activeLoc} />
         )}
       </main>
     </div>
