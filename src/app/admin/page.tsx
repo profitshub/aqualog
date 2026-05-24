@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { TEMP_AREAS } from "@/lib/config";
+import { TEMP_AREAS, HOTEL_NAME } from "@/lib/config";
 
 type LogType = "water" | "temperature";
 
@@ -163,7 +163,7 @@ export default function AdminPage() {
             <h1 style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.25rem" }}>
               Admin Console
             </h1>
-            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>AquaLog · Hotel Utility Logs</p>
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>AquaLog · {HOTEL_NAME}</p>
           </div>
           <div className="card" style={{ padding: "1.5rem" }}>
             <label style={{ fontSize: "0.8rem", color: "var(--text-secondary)", display: "block", marginBottom: "0.5rem" }}>
@@ -185,8 +185,8 @@ export default function AdminPage() {
             </button>
           </div>
           <div style={{ textAlign: "center", marginTop: "1.25rem" }}>
-            <Link href="/log" style={{ fontSize: "0.8rem", color: "var(--text-muted)", textDecoration: "none" }}>
-              ← Back to logger
+            <Link href="/" style={{ fontSize: "0.8rem", color: "var(--text-muted)", textDecoration: "none" }}>
+              ← Back
             </Link>
           </div>
         </motion.div>
@@ -211,7 +211,10 @@ export default function AdminPage() {
             width: 28, height: 28, borderRadius: 8, background: "var(--brand)", color: "#080B10",
             display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14,
           }}>A</div>
-          <span style={{ fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)" }}>AquaLog</span>
+          <div>
+            <span style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--text-primary)", display: "block", lineHeight: 1.1 }}>AquaLog</span>
+            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{HOTEL_NAME}</span>
+          </div>
           <span style={{
             fontSize: "0.65rem", fontWeight: 500, padding: "2px 8px", borderRadius: 999,
             background: "rgba(239,68,68,.15)", color: "#EF4444", border: "1px solid rgba(239,68,68,.3)",

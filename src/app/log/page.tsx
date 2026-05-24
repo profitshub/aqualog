@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { WATER_POINTS, TEMP_AREAS, CHECK_TIMES } from "@/lib/config";
+import { WATER_POINTS, TEMP_AREAS, CHECK_TIMES, HOTEL_NAME } from "@/lib/config";
 
 type LogType = "water" | "temperature";
 type Step = "name" | "type" | "form" | "done";
@@ -128,7 +128,10 @@ export default function LogPage() {
             display: "flex", alignItems: "center", justifyContent: "center",
             fontWeight: 700, fontSize: 14,
           }}>A</div>
-          <span style={{ fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)" }}>AquaLog</span>
+          <div>
+            <span style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--text-primary)", display: "block", lineHeight: 1.1 }}>AquaLog</span>
+            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{HOTEL_NAME}</span>
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
           <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{currentShift()}</span>
@@ -486,8 +489,8 @@ export default function LogPage() {
         display: "flex", justifyContent: "space-around",
       }}>
         <Link href="/" style={{ textAlign: "center", textDecoration: "none" }}>
-          <div style={{ fontSize: "1.2rem" }}>🏠</div>
-          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Home</div>
+          <div style={{ fontSize: "1.2rem" }}>⬡</div>
+          <div style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Entry</div>
         </Link>
         <button
           onClick={() => setStep("type")}

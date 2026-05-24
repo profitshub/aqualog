@@ -1,6 +1,7 @@
 // Log configuration — edit these as the hotel's needs evolve
 
-export const LOCATION = "Main Hotel";   // Will expand to multi-location later
+export const HOTEL_NAME = "Golden Tulip Lekki";
+export const LOCATION   = "Golden Tulip Lekki";   // Will expand to multi-location later
 
 export const WATER_POINTS = [
   { id: "main_meter",   label: "Main Water Meter",  unit: "m³"  },
