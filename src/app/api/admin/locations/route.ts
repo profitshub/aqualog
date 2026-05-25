@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readSessionFromHeaders } from "@/lib/google-auth";
-import { getLocations, createLocationSheet, saveLocation } from "@/lib/sheets";
+import { getLocations, getMasterSheetId, createLocationSheet, saveLocation } from "@/lib/sheets";
 
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -12,10 +12,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    return NextResponse.json(await getLocations());
+    const [locs, { id: registryId, fromEnv }] = await Promise.all([getLocations(), getMasterSheetId()]);
+    return NextResponse.json({ locations: locs, registryId, needsEnvVar: !fromEnv });
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ error: "Failed to read locations" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 

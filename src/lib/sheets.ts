@@ -1,9 +1,6 @@
 import { google } from "googleapis";
 
-const SCOPES = [
-  "https://www.googleapis.com/auth/spreadsheets",
-  "https://www.googleapis.com/auth/drive",
-];
+const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
 function serviceAccount() {
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!);
@@ -12,10 +9,6 @@ function serviceAccount() {
 
 export function getSheetsClient() {
   return google.sheets({ version: "v4", auth: serviceAccount() });
-}
-
-function getDriveClient() {
-  return google.drive({ version: "v3", auth: serviceAccount() });
 }
 
 // Legacy single-sheet ID (kept for backwards compat)
@@ -36,30 +29,18 @@ const REGISTRY_NAME = "AquaLog Registry";
 const MASTER_TABS   = { locations: "Locations" };
 
 // In-memory caches (reset on cold start)
-let _masterSheetId: string | null = null;
+let _masterSheetIdRuntime: string | null = null;  // fallback when env var not set
 let _locCache: { data: LocationRecord[]; ts: number } | null = null;
 
 export function invalidateLocationsCache() { _locCache = null; }
 
-async function getMasterSheetId(): Promise<string> {
-  if (_masterSheetId) return _masterSheetId;
+/** Returns { id, fromEnv } — id is the registry sheet ID, fromEnv=false means it was just created this session */
+export async function getMasterSheetId(): Promise<{ id: string; fromEnv: boolean }> {
+  if (process.env.MASTER_SHEET_ID) return { id: process.env.MASTER_SHEET_ID, fromEnv: true };
+  if (_masterSheetIdRuntime)       return { id: _masterSheetIdRuntime, fromEnv: false };
 
-  const drive = getDriveClient();
-
-  // Search for existing registry file owned by the service account
-  const search = await drive.files.list({
-    q: `name='${REGISTRY_NAME}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
-    fields: "files(id)",
-    spaces: "drive",
-  });
-
-  if (search.data.files?.length) {
-    _masterSheetId = search.data.files[0].id!;
-    return _masterSheetId;
-  }
-
-  // First run — create the registry sheet with a Locations tab
-  const sheets = getSheetsClient();
+  // No env var set — auto-create registry sheet (Sheets API only, no Drive needed)
+  const sheets  = getSheetsClient();
   const created = await sheets.spreadsheets.create({
     requestBody: {
       properties: { title: REGISTRY_NAME },
@@ -67,16 +48,14 @@ async function getMasterSheetId(): Promise<string> {
     },
   });
   const mid = created.data.spreadsheetId!;
-
   await sheets.spreadsheets.values.update({
     spreadsheetId: mid,
     range: `'${MASTER_TABS.locations}'!A1:D1`,
     valueInputOption: "RAW",
     requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
   });
-
-  _masterSheetId = mid;
-  return mid;
+  _masterSheetIdRuntime = mid;
+  return { id: mid, fromEnv: false };
 }
 
 export async function getLocations(): Promise<LocationRecord[]> {
@@ -88,8 +67,8 @@ export async function getLocations(): Promise<LocationRecord[]> {
 
 export async function readLocations(): Promise<LocationRecord[]> {
   try {
-    const mid  = await getMasterSheetId();
-    const rows = await readRows(MASTER_TABS.locations, mid);
+    const { id } = await getMasterSheetId();
+    const rows   = await readRows(MASTER_TABS.locations, id);
     return rows.filter(r => r[0] && r[2]).map(r => ({
       id:        r[0],
       name:      r[1] ?? r[0],
@@ -100,7 +79,7 @@ export async function readLocations(): Promise<LocationRecord[]> {
 }
 
 export async function saveLocation(id: string, name: string, sid: string): Promise<void> {
-  const mid = await getMasterSheetId();
+  const { id: mid } = await getMasterSheetId();
   await appendRow(MASTER_TABS.locations, [id, name, sid, new Date().toISOString()], mid);
   invalidateLocationsCache();
 }

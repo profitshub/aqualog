@@ -812,11 +812,14 @@ function NotificationsPanel({ location }: { location: string }) {
 
 // ── Locations Panel ───────────────────────────────────────────────────────────
 
-function LocationsPanel({ locations, onCreated }: { locations: LocationRecord[]; onCreated: () => void }) {
+function LocationsPanel({ locations, registryId, needsEnvVar, onCreated }: {
+  locations: LocationRecord[]; registryId: string; needsEnvVar: boolean; onCreated: () => void;
+}) {
   const [name,     setName]     = useState("");
   const [creating, setCreating] = useState(false);
   const [error,    setError]    = useState("");
   const [msg,      setMsg]      = useState("");
+  const [copied,   setCopied]   = useState(false);
 
   async function create() {
     if (!name.trim()) return;
@@ -830,6 +833,12 @@ function LocationsPanel({ locations, onCreated }: { locations: LocationRecord[];
     finally  { setCreating(false); }
   }
 
+  function copyId() {
+    navigator.clipboard.writeText(registryId);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
@@ -837,13 +846,21 @@ function LocationsPanel({ locations, onCreated }: { locations: LocationRecord[];
         <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{locations.length} location{locations.length !== 1 ? "s" : ""}</span>
       </div>
 
-      {/* Setup note */}
-      <div className="card" style={{ padding: "0.875rem 1rem", marginBottom: "1.25rem", borderColor: "rgba(0,212,170,0.25)", background: "rgba(0,212,170,0.04)" }}>
-        <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--brand)", marginBottom: "0.25rem" }}>📋 One-time setup required</p>
-        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
-          Create a Google Sheet, share it with your service account email (from <code style={{ fontSize: "0.68rem", background: "var(--bg-elevated)", padding: "1px 5px", borderRadius: 4 }}>GOOGLE_SERVICE_ACCOUNT_KEY</code>), then add its ID as <code style={{ fontSize: "0.68rem", background: "var(--bg-elevated)", padding: "1px 5px", borderRadius: 4 }}>MASTER_SHEET_ID</code> in Vercel environment variables. Once set, create new locations below — their sheets are auto-created.
-        </p>
-      </div>
+      {/* One-time env var banner */}
+      {needsEnvVar && registryId && (
+        <div className="card" style={{ padding: "0.875rem 1rem", marginBottom: "1.25rem", borderColor: "rgba(251,188,5,0.4)", background: "rgba(251,188,5,0.06)" }}>
+          <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#FBBC05", marginBottom: "0.4rem" }}>⚠ One-time setup — save your registry ID</p>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.7, marginBottom: "0.625rem" }}>
+            AquaLog created your registry sheet automatically. Add the ID below to Vercel → Settings → Environment Variables as <code style={{ fontSize: "0.68rem", background: "var(--bg-elevated)", padding: "1px 5px", borderRadius: 4 }}>MASTER_SHEET_ID</code>, then redeploy. You only need to do this once.
+          </p>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <code style={{ flex: 1, fontSize: "0.72rem", background: "var(--bg-elevated)", padding: "0.4rem 0.6rem", borderRadius: 6, color: "var(--text-primary)", wordBreak: "break-all" }}>{registryId}</code>
+            <button onClick={copyId} style={{ padding: "0.4rem 0.75rem", borderRadius: 6, background: "var(--bg-elevated)", border: "1px solid var(--bg-border)", color: "var(--text-secondary)", fontSize: "0.72rem", cursor: "pointer", flexShrink: 0 }}>
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Add location */}
       <div className="card" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
@@ -905,7 +922,9 @@ export default function AdminPage() {
   const [stats,      setStats]      = useState<StatsData | null>(null);
   const [activeTab,  setActiveTab]  = useState<Tab>("overview");
   const [activeLoc,  setActiveLoc]  = useState<string>("");
-  const [locations,  setLocations]  = useState<LocationRecord[]>([]);
+  const [locations,   setLocations]   = useState<LocationRecord[]>([]);
+  const [registryId,  setRegistryId]  = useState<string>("");
+  const [needsEnvVar, setNeedsEnvVar] = useState(false);
 
   const [logs,       setLogs]       = useState<AnyLog[]>([]);
   const [logsLoaded, setLogsLoaded] = useState(false);
@@ -920,10 +939,13 @@ export default function AdminPage() {
       const r = await fetch("/api/admin/locations");
       if (r.status === 401) { setPageState("unauthed"); return; }
       if (!r.ok) { setPageState("authed"); return; }
-      const locs = await r.json() as LocationRecord[];
+      const data = await r.json() as { locations: LocationRecord[]; registryId: string; needsEnvVar: boolean };
+      const locs = data.locations ?? [];
       setLocations(locs);
+      setRegistryId(data.registryId ?? "");
+      setNeedsEnvVar(data.needsEnvVar ?? false);
       if (locs.length > 0 && !activeLoc) setActiveLoc(locs[0].id);
-      if (locs.length === 0) setPageState("authed"); // first-time setup
+      setPageState("authed");
     } catch { setPageState("authed"); }
   }, [activeLoc]);
 
@@ -1118,6 +1140,8 @@ export default function AdminPage() {
         {activeTab === "locations" && (
           <LocationsPanel
             locations={locations}
+            registryId={registryId}
+            needsEnvVar={needsEnvVar}
             onCreated={() => { loadLocations(); }}
           />
         )}
