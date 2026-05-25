@@ -55,15 +55,28 @@ export async function getMasterSheetId(
   const drive  = google.drive({ version: "v3", auth: client });
 
   const created = await sheets.spreadsheets.create({
-    requestBody: {
-      properties: { title: REGISTRY_NAME },
-      sheets: [{ properties: { title: MASTER_TABS.locations, gridProperties: { frozenRowCount: 1 } } }],
-    },
+    requestBody: { properties: { title: REGISTRY_NAME } },
   });
   const mid = created.data.spreadsheetId!;
+
+  // Get the default sheet id, then rename it to "Locations"
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: mid, fields: "sheets.properties" });
+  const firstSheetId = meta.data.sheets?.[0]?.properties?.sheetId ?? 0;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: mid,
+    requestBody: {
+      requests: [{
+        updateSheetProperties: {
+          properties: { sheetId: firstSheetId, title: MASTER_TABS.locations, gridProperties: { frozenRowCount: 1 } },
+          fields: "title,gridProperties.frozenRowCount",
+        },
+      }],
+    },
+  });
+
   await sheets.spreadsheets.values.update({
     spreadsheetId: mid,
-    range: `'${MASTER_TABS.locations}'!A1:D1`,
+    range: `${MASTER_TABS.locations}!A1:D1`,
     valueInputOption: "RAW",
     requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
   });
@@ -143,22 +156,40 @@ export async function createLocationSheet(
   const sheets = google.sheets({ version: "v4", auth: client });
   const drive  = google.drive({ version: "v3", auth: client });
 
-  // Create spreadsheet in admin's Drive
+  // Create spreadsheet in admin's Drive with just a default sheet
   const created = await sheets.spreadsheets.create({
-    requestBody: {
-      properties: { title: `AquaLog — ${locationName}` },
-      sheets: LOCATION_SHEET_TABS.map(t => ({
-        properties: { title: t.name, gridProperties: { frozenRowCount: 1 } },
-      })),
-    },
+    requestBody: { properties: { title: `AquaLog — ${locationName}` } },
   });
   const id = created.data.spreadsheetId!;
 
-  // Write headers
+  // Get the default sheet id, rename it to the first tab, then add the rest
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: id, fields: "sheets.properties" });
+  const firstSheetId = meta.data.sheets?.[0]?.properties?.sheetId ?? 0;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: id,
+    requestBody: {
+      requests: [
+        // Rename default sheet to first tab
+        {
+          updateSheetProperties: {
+            properties: { sheetId: firstSheetId, title: LOCATION_SHEET_TABS[0].name, gridProperties: { frozenRowCount: 1 } },
+            fields: "title,gridProperties.frozenRowCount",
+          },
+        },
+        // Add remaining tabs
+        ...LOCATION_SHEET_TABS.slice(1).map(t => ({
+          addSheet: { properties: { title: t.name, gridProperties: { frozenRowCount: 1 } } },
+        })),
+      ],
+    },
+  });
+
+  // Write headers to all tabs
   await Promise.all(LOCATION_SHEET_TABS.map(t =>
     sheets.spreadsheets.values.update({
       spreadsheetId: id,
-      range: `'${t.name}'!A1:${String.fromCharCode(64 + t.headers.length)}1`,
+      range: `${t.name}!A1:${String.fromCharCode(64 + t.headers.length)}1`,
       valueInputOption: "RAW",
       requestBody: { values: [t.headers] },
     })
