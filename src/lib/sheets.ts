@@ -26,7 +26,7 @@ export interface LocationRecord {
 }
 
 const REGISTRY_NAME = "AquaLog Registry";
-const MASTER_TABS   = { locations: "Locations" };
+const MASTER_TABS   = { locations: "Locations", admins: "Admins" };
 
 // In-memory caches (reset on cold start)
 let _masterSheetIdRuntime: string | null = null;  // fallback when env var not set
@@ -198,6 +198,86 @@ export async function deleteLocation(locationId: string): Promise<void> {
     },
   });
   invalidateLocationsCache();
+}
+
+// ── Admin management (stored in master sheet Admins tab) ─────────────────────
+
+export interface AdminRecord {
+  email:     string;
+  name:      string;
+  addedBy:   string;
+  addedAt:   string;
+  active:    boolean;
+}
+
+let _adminCache: { data: AdminRecord[]; ts: number } | null = null;
+
+export function invalidateAdminCache() { _adminCache = null; }
+
+async function ensureAdminsTab(mid: string): Promise<void> {
+  const sheets = getSheetsClient();
+  try {
+    const meta   = await sheets.spreadsheets.get({ spreadsheetId: mid, fields: "sheets.properties.title" });
+    const titles = (meta.data.sheets ?? []).map(s => s.properties?.title ?? "");
+    if (titles.includes(MASTER_TABS.admins)) return;
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: mid,
+      requestBody: { requests: [{ addSheet: { properties: { title: MASTER_TABS.admins, gridProperties: { frozenRowCount: 1 } } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: mid, range: `${MASTER_TABS.admins}!A1:D1`,
+      valueInputOption: "RAW", requestBody: { values: [["email", "name", "addedBy", "addedAt", "active"]] },
+    });
+  } catch { /* ignore */ }
+}
+
+export async function readAdmins(): Promise<AdminRecord[]> {
+  try {
+    const { id: mid } = await getMasterSheetId();
+    await ensureAdminsTab(mid);
+    const rows = await readRows(MASTER_TABS.admins, mid);
+    return rows.filter(r => r[0]).map(r => ({
+      email:   r[0].toLowerCase(),
+      name:    r[1] ?? "",
+      addedBy: r[2] ?? "",
+      addedAt: r[3] ?? "",
+      active:  (r[4] ?? "TRUE").toUpperCase() !== "FALSE",
+    }));
+  } catch { return []; }
+}
+
+export async function addAdmin(email: string, name: string, addedBy: string): Promise<void> {
+  const { id: mid } = await getMasterSheetId();
+  await ensureAdminsTab(mid);
+  const existing = await readAdmins();
+  const found    = existing.find(a => a.email === email.toLowerCase());
+  if (found) {
+    if (found.active) return; // already active
+    // Reactivate
+    const sheets = getSheetsClient();
+    const rows   = await readRows(MASTER_TABS.admins, mid);
+    const rowIdx = rows.findIndex(r => r[0]?.toLowerCase() === email.toLowerCase());
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: mid, range: `${MASTER_TABS.admins}!E${rowIdx + 2}`,
+      valueInputOption: "RAW", requestBody: { values: [["TRUE"]] },
+    });
+  } else {
+    await appendRow(MASTER_TABS.admins, [email.toLowerCase(), name, addedBy, new Date().toISOString(), "TRUE"], mid);
+  }
+  invalidateAdminCache();
+}
+
+export async function removeAdmin(email: string): Promise<void> {
+  const { id: mid } = await getMasterSheetId();
+  const sheets  = getSheetsClient();
+  const rows    = await readRows(MASTER_TABS.admins, mid);
+  const rowIdx  = rows.findIndex(r => r[0]?.toLowerCase() === email.toLowerCase());
+  if (rowIdx < 0) return;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: mid, range: `${MASTER_TABS.admins}!E${rowIdx + 2}`,
+    valueInputOption: "RAW", requestBody: { values: [["FALSE"]] },
+  });
+  invalidateAdminCache();
 }
 
 export async function getSheetIdForLocation(locationId: string): Promise<string> {

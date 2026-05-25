@@ -37,7 +37,7 @@ interface TempLog {
   status: "OK" | "WARN" | "DANGER"; notes: string;
 }
 type AnyLog = WaterLog | TempLog;
-type Tab = "overview" | "logs" | "staff" | "targets" | "notify" | "locations";
+type Tab = "overview" | "logs" | "staff" | "targets" | "notify" | "locations" | "admins";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -947,10 +947,118 @@ function LocationsPanel({ locations, registryId, needsEnvVar, onCreated }: {
   );
 }
 
+// ── AdminsPanel ───────────────────────────────────────────────────────────────
+
+interface AdminRecord { email: string; name: string; addedBy: string; addedAt: string; active: boolean; }
+
+function AdminsPanel({ currentEmail }: { currentEmail: string }) {
+  const [admins,    setAdmins]    = useState<AdminRecord[]>([]);
+  const [superList, setSuperList] = useState<string[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [email,     setEmail]     = useState("");
+  const [name,      setName]      = useState("");
+  const [adding,    setAdding]    = useState(false);
+  const [error,     setError]     = useState("");
+  const [msg,       setMsg]       = useState("");
+  const isSuperAdmin = superList.includes(currentEmail.toLowerCase());
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/admin/admins");
+      if (r.ok) { const d = await r.json() as { admins: AdminRecord[]; superAdmins: string[] }; setAdmins(d.admins.filter(a => a.active)); setSuperList(d.superAdmins); }
+    } finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function addAdmin() {
+    if (!email.trim()) return;
+    setAdding(true); setError(""); setMsg("");
+    try {
+      const r = await fetch("/api/admin/admins", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email.trim(), name: name.trim() }) });
+      const j = await r.json() as { ok?: boolean; error?: string };
+      if (!r.ok) setError(j.error ?? "Failed");
+      else { setMsg(`✓ ${email.trim()} now has admin access.`); setEmail(""); setName(""); load(); }
+    } catch { setError("Network error."); }
+    finally { setAdding(false); }
+  }
+
+  async function removeAdmin(adminEmail: string) {
+    await fetch("/api/admin/admins", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: adminEmail }) });
+    load();
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+        <h2 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)" }}>Admin Access</h2>
+        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{admins.length + superList.length} admin{admins.length + superList.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {/* Super admins info */}
+      <div className="card" style={{ padding: "0.875rem 1rem", marginBottom: "1.25rem", borderColor: "rgba(0,212,170,0.2)", background: "rgba(0,212,170,0.04)" }}>
+        <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--brand)", marginBottom: "0.4rem" }}>🛡 Super Admin{superList.length !== 1 ? "s" : ""}</p>
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
+          Set via <code style={{ fontSize: "0.68rem", background: "var(--bg-elevated)", padding: "1px 5px", borderRadius: 4 }}>ADMIN_EMAILS</code> env var. Cannot be removed here.
+        </p>
+        <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+          {superList.map(e => <span key={e} style={{ fontSize: "0.72rem", padding: "2px 8px", borderRadius: 999, background: "var(--brand-dim)", color: "var(--brand)", border: "1px solid rgba(0,212,170,0.2)" }}>{e}</span>)}
+        </div>
+      </div>
+
+      {/* Add admin (super admin only) */}
+      {isSuperAdmin && (
+        <div className="card" style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.875rem" }}>Grant Admin Access</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
+            <input className="input-field" placeholder="Email address" value={email} onChange={e => { setEmail(e.target.value); setError(""); setMsg(""); }} />
+            <input className="input-field" placeholder="Name (optional)" value={name} onChange={e => setName(e.target.value)} />
+            <button onClick={addAdmin} disabled={adding || !email.trim()}
+              style={{ padding: "0.65rem", borderRadius: 8, background: "var(--brand)", color: "#080B10", border: "none", cursor: adding ? "not-allowed" : "pointer", fontWeight: 600, fontSize: "0.85rem", opacity: adding ? 0.7 : 1 }}>
+              {adding ? "Granting…" : "Grant Access"}
+            </button>
+            {error && <p style={{ fontSize: "0.78rem", color: "var(--danger)" }}>{error}</p>}
+            {msg   && <p style={{ fontSize: "0.78rem", color: "var(--ok)" }}>{msg}</p>}
+          </div>
+        </div>
+      )}
+
+      {/* Admin list */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "2rem", color: "var(--text-muted)", fontSize: "0.85rem" }}>Loading…</div>
+      ) : admins.length === 0 ? (
+        <div className="card" style={{ padding: "2rem", textAlign: "center" }}>
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>No additional admins yet.</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
+          {admins.map(a => (
+            <div key={a.email} className="card" style={{ padding: "0.875rem 1.125rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: "0.88rem", color: "var(--text-primary)" }}>{a.name || a.email}</p>
+                {a.name && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{a.email}</p>}
+                <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>Added by {a.addedBy}</p>
+              </div>
+              {isSuperAdmin && (
+                <button onClick={() => removeAdmin(a.email)}
+                  style={{ fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, background: "rgba(239,68,68,0.08)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.2)", cursor: "pointer", flexShrink: 0 }}>
+                  Revoke
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
   const [pageState,  setPageState]  = useState<"checking" | "unauthed" | "authed">("checking");
+  const [user,       setUser]       = useState<{ email: string; name: string } | null>(null);
   const [stats,      setStats]      = useState<StatsData | null>(null);
   const [activeTab,  setActiveTab]  = useState<Tab>("overview");
   const [activeLoc,  setActiveLoc]  = useState<string>("");
@@ -994,6 +1102,7 @@ export default function AdminPage() {
   }, [activeLoc]);
 
   useEffect(() => {
+    fetch("/api/auth/me").then(r => r.ok ? r.json() : null).then(u => { if (u) setUser({ email: u.email, name: u.name }); });
     loadLocations().then(() => loadStats());
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1079,6 +1188,7 @@ export default function AdminPage() {
     { id: "targets",    label: "Targets"       },
     { id: "notify",     label: "Notifications" },
     { id: "locations",  label: "Locations"     },
+    { id: "admins",     label: "Admins"        },
   ];
 
   return (
@@ -1176,6 +1286,9 @@ export default function AdminPage() {
             needsEnvVar={needsEnvVar}
             onCreated={() => { loadLocations(); }}
           />
+        )}
+        {activeTab === "admins" && (
+          <AdminsPanel currentEmail={user?.email ?? ""} />
         )}
       </main>
     </div>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readSessionFromHeaders, sessionCookieHeader } from "@/lib/google-auth";
 import { getAdminEmails } from "@/lib/config";
-import { getLocations, readStaff } from "@/lib/sheets";
+import { getLocations, readStaff, readAdmins } from "@/lib/sheets";
 
 export async function POST(req: NextRequest) {
   const session = readSessionFromHeaders(req.headers);
@@ -18,8 +18,11 @@ export async function POST(req: NextRequest) {
 
   // ── Admin verification ────────────────────────────────────────────────────
   if (role === "admin") {
-    const allowed = getAdminEmails();
-    if (!allowed.includes(email)) {
+    const superAdmins  = getAdminEmails();
+    const sheetAdmins  = await readAdmins();
+    const isSuperAdmin = superAdmins.includes(email);
+    const isSheetAdmin = sheetAdmins.some(a => a.email === email && a.active);
+    if (!isSuperAdmin && !isSheetAdmin) {
       return NextResponse.json({
         error: "Your account has not been granted admin access. Contact the system administrator.",
         denied: true,
