@@ -919,11 +919,12 @@ export default function AdminPage() {
     try {
       const r = await fetch("/api/admin/locations");
       if (r.status === 401) { setPageState("unauthed"); return; }
-      if (!r.ok) return;
+      if (!r.ok) { setPageState("authed"); return; }
       const locs = await r.json() as LocationRecord[];
       setLocations(locs);
       if (locs.length > 0 && !activeLoc) setActiveLoc(locs[0].id);
-    } catch { /* ignore */ }
+      if (locs.length === 0) setPageState("authed"); // first-time setup
+    } catch { setPageState("authed"); }
   }, [activeLoc]);
 
   const loadStats = useCallback(async (loc?: string) => {
@@ -932,10 +933,10 @@ export default function AdminPage() {
     try {
       const r = await fetch(`/api/admin/stats?location=${location}`);
       if (r.status === 401) { setPageState("unauthed"); return; }
-      if (!r.ok) throw new Error();
+      if (!r.ok) { setPageState("authed"); return; }
       setStats(await r.json());
       setPageState("authed");
-    } catch { setPageState("unauthed"); }
+    } catch { setPageState("authed"); }
   }, [activeLoc]);
 
   useEffect(() => {
