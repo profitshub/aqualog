@@ -15,10 +15,12 @@ export async function GET(req: NextRequest) {
     const { data: info } = await oauth2.userinfo.get();
 
     const session: UserSession = {
-      email:   info.email!,
-      name:    info.name ?? info.email!,
-      picture: info.picture ?? undefined,
-      // role is not set yet — user picks it on /role
+      email:        info.email!,
+      name:         info.name ?? info.email!,
+      picture:      info.picture ?? undefined,
+      accessToken:  tokens.access_token  ?? undefined,
+      refreshToken: tokens.refresh_token ?? undefined,
+      expiryDate:   tokens.expiry_date   ?? undefined,
     };
 
     const res = NextResponse.redirect(new URL("/role", req.url));

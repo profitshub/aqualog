@@ -34,13 +34,26 @@ let _locCache: { data: LocationRecord[]; ts: number } | null = null;
 
 export function invalidateLocationsCache() { _locCache = null; }
 
-/** Returns { id, fromEnv } — id is the registry sheet ID, fromEnv=false means it was just created this session */
-export async function getMasterSheetId(): Promise<{ id: string; fromEnv: boolean }> {
+/** Returns { id, fromEnv }.
+ *  fromEnv=false means it was just created — admin should save MASTER_SHEET_ID to Vercel. */
+export async function getMasterSheetId(
+  adminTokens?: { accessToken: string; refreshToken: string; expiryDate?: number }
+): Promise<{ id: string; fromEnv: boolean }> {
   if (process.env.MASTER_SHEET_ID) return { id: process.env.MASTER_SHEET_ID, fromEnv: true };
   if (_masterSheetIdRuntime)       return { id: _masterSheetIdRuntime, fromEnv: false };
+  if (!adminTokens)                throw new Error("Registry not initialised and no admin tokens provided.");
 
-  // No env var set — auto-create registry sheet (Sheets API only, no Drive needed)
-  const sheets  = getSheetsClient();
+  // Auto-create registry in admin's Drive
+  const { createOAuthClient } = await import("@/lib/google-auth");
+  const client = createOAuthClient();
+  client.setCredentials({
+    access_token:  adminTokens.accessToken,
+    refresh_token: adminTokens.refreshToken,
+    expiry_date:   adminTokens.expiryDate,
+  });
+  const sheets = google.sheets({ version: "v4", auth: client });
+  const drive  = google.drive({ version: "v3", auth: client });
+
   const created = await sheets.spreadsheets.create({
     requestBody: {
       properties: { title: REGISTRY_NAME },
@@ -54,6 +67,15 @@ export async function getMasterSheetId(): Promise<{ id: string; fromEnv: boolean
     valueInputOption: "RAW",
     requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
   });
+
+  // Share registry with service account
+  const serviceAccountEmail = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!).client_email as string;
+  await drive.permissions.create({
+    fileId: mid,
+    requestBody: { type: "user", role: "writer", emailAddress: serviceAccountEmail },
+    sendNotificationEmail: false,
+  });
+
   _masterSheetIdRuntime = mid;
   return { id: mid, fromEnv: false };
 }
@@ -64,6 +86,8 @@ export async function getLocations(): Promise<LocationRecord[]> {
   _locCache = { data, ts: Date.now() };
   return data;
 }
+
+type AdminTokens = { accessToken: string; refreshToken: string; expiryDate?: number };
 
 export async function readLocations(): Promise<LocationRecord[]> {
   try {
@@ -78,8 +102,8 @@ export async function readLocations(): Promise<LocationRecord[]> {
   } catch { return []; }
 }
 
-export async function saveLocation(id: string, name: string, sid: string): Promise<void> {
-  const { id: mid } = await getMasterSheetId();
+export async function saveLocation(id: string, name: string, sid: string, adminTokens: AdminTokens): Promise<void> {
+  const { id: mid } = await getMasterSheetId(adminTokens);
   await appendRow(MASTER_TABS.locations, [id, name, sid, new Date().toISOString()], mid);
   invalidateLocationsCache();
 }
@@ -104,9 +128,22 @@ const LOCATION_SHEET_TABS = [
   { name: "Subscriptions",  headers: ["Email","Name","Subscription JSON","Endpoint","Created At","Active"] },
 ];
 
-export async function createLocationSheet(locationName: string): Promise<string> {
-  const sheets = getSheetsClient();
+export async function createLocationSheet(
+  locationName: string,
+  adminTokens: { accessToken: string; refreshToken: string; expiryDate?: number }
+): Promise<string> {
+  const { createOAuthClient } = await import("@/lib/google-auth");
+  const client = createOAuthClient();
+  client.setCredentials({
+    access_token:  adminTokens.accessToken,
+    refresh_token: adminTokens.refreshToken,
+    expiry_date:   adminTokens.expiryDate,
+  });
 
+  const sheets = google.sheets({ version: "v4", auth: client });
+  const drive  = google.drive({ version: "v3", auth: client });
+
+  // Create spreadsheet in admin's Drive
   const created = await sheets.spreadsheets.create({
     requestBody: {
       properties: { title: `AquaLog — ${locationName}` },
@@ -139,6 +176,14 @@ export async function createLocationSheet(locationName: string): Promise<string>
         ["checks_per_area_per_day",  "3",   "count", locationName, "daily", "Required logging frequency per monitored area"],
       ],
     },
+  });
+
+  // Share with service account so it can read/write logger data
+  const serviceAccountEmail = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!).client_email as string;
+  await drive.permissions.create({
+    fileId: id,
+    requestBody: { type: "user", role: "writer", emailAddress: serviceAccountEmail },
+    sendNotificationEmail: false,
   });
 
   return id;

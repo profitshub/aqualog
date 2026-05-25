@@ -1,8 +1,11 @@
 import { google } from "googleapis";
 import { createHmac } from "crypto";
 
-// Identity only — no spreadsheet scopes needed (service account handles all sheet ops)
-export const OAUTH_SCOPES = ["openid", "email", "profile"];
+export const OAUTH_SCOPES = [
+  "openid", "email", "profile",
+  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/spreadsheets",
+];
 
 export function createOAuthClient() {
   return new google.auth.OAuth2(
@@ -29,6 +32,10 @@ export interface UserSession {
   role?:         "admin" | "logger";  // undefined = pending role selection
   locationId?:   string;              // set for loggers
   locationName?: string;              // set for loggers
+  // Admin OAuth tokens — used to create sheets in admin's Drive
+  accessToken?:  string;
+  refreshToken?: string;
+  expiryDate?:   number;
 }
 
 const COOKIE = "aql_session";

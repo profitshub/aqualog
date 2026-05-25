@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readSessionFromHeaders } from "@/lib/google-auth";
 import { getLocations, getMasterSheetId, createLocationSheet, saveLocation } from "@/lib/sheets";
+import type { UserSession } from "@/lib/google-auth";
+
+function tokens(session: UserSession) {
+  return {
+    accessToken:  session.accessToken!,
+    refreshToken: session.refreshToken!,
+    expiryDate:   session.expiryDate,
+  };
+}
 
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -12,7 +21,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const [locs, { id: registryId, fromEnv }] = await Promise.all([getLocations(), getMasterSheetId()]);
+    const t = tokens(session);
+    const [locs, { id: registryId, fromEnv }] = await Promise.all([
+      getLocations(),
+      getMasterSheetId(t),
+    ]);
     return NextResponse.json({ locations: locs, registryId, needsEnvVar: !fromEnv });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -41,9 +54,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "A location with that name already exists" }, { status: 409 });
   }
 
+  if (!session.accessToken || !session.refreshToken) {
+    return NextResponse.json({ error: "Session missing OAuth tokens. Please sign out and sign in again." }, { status: 401 });
+  }
+
   try {
-    const sheetId = await createLocationSheet(locationName);
-    await saveLocation(locationId, locationName, sheetId);
+    const t       = tokens(session);
+    const sheetId = await createLocationSheet(locationName, t);
+    await saveLocation(locationId, locationName, sheetId, t);
     return NextResponse.json({ ok: true, id: locationId, name: locationName, sheetId });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
