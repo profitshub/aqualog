@@ -44,7 +44,8 @@ export async function POST(req: NextRequest) {
     await saveLocation(locationId, locationName, sheetId);
     return NextResponse.json({ ok: true, id: locationId, name: locationName, sheetId });
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ error: "Failed to create location" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("create location error:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
