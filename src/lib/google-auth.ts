@@ -19,7 +19,7 @@ export function getAuthUrl(): string {
   return createOAuthClient().generateAuthUrl({
     access_type: "offline",
     scope: OAUTH_SCOPES,
-    prompt: "select_account",
+    prompt: "consent",
   });
 }
 
