@@ -178,6 +178,28 @@ export async function saveLocation(id: string, name: string, sid: string, adminT
   invalidateLocationsCache();
 }
 
+export async function deleteLocation(locationId: string): Promise<void> {
+  const { id: mid } = await getMasterSheetId();
+  const sheets = getSheetsClient();
+  const rows   = await readRows(MASTER_TABS.locations, mid);
+  const rowIdx = rows.findIndex(r => r[0] === locationId);
+  if (rowIdx < 0) return;
+  // Delete the row using batchUpdate (rowIndex is 0-based, +1 for header)
+  const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId: mid, fields: "sheets.properties" });
+  const sheetIdNum = sheetMeta.data.sheets?.find(s => s.properties?.title === MASTER_TABS.locations)?.properties?.sheetId ?? 0;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: mid,
+    requestBody: {
+      requests: [{
+        deleteDimension: {
+          range: { sheetId: sheetIdNum, dimension: "ROWS", startIndex: rowIdx + 1, endIndex: rowIdx + 2 },
+        },
+      }],
+    },
+  });
+  invalidateLocationsCache();
+}
+
 export async function getSheetIdForLocation(locationId: string): Promise<string> {
   const locs = await getLocations();
   return locs.find(l => l.id === locationId)?.sheetId ?? "";

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readSessionFromHeaders } from "@/lib/google-auth";
-import { getLocations, getMasterSheetId, createLocationSheet, saveLocation } from "@/lib/sheets";
+import { getLocations, getMasterSheetId, createLocationSheet, saveLocation, deleteLocation } from "@/lib/sheets";
 import type { UserSession } from "@/lib/google-auth";
 
 function tokens(session: UserSession) {
@@ -66,6 +66,22 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("create location error:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const session = readSessionFromHeaders(req.headers);
+  if (!session || session.role !== "admin") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const { id } = await req.json() as { id?: string };
+  if (!id) return NextResponse.json({ error: "Location ID required" }, { status: 400 });
+  try {
+    await deleteLocation(id);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -812,6 +812,51 @@ function NotificationsPanel({ location }: { location: string }) {
 
 // ── Locations Panel ───────────────────────────────────────────────────────────
 
+function LocationRow({ loc, onDeleted }: { loc: LocationRecord; onDeleted: () => void }) {
+  const [confirm,   setConfirm]   = useState(false);
+  const [deleting,  setDeleting]  = useState(false);
+
+  async function doDelete() {
+    setDeleting(true);
+    try {
+      await fetch("/api/admin/locations", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: loc.id }) });
+      onDeleted();
+    } finally { setDeleting(false); setConfirm(false); }
+  }
+
+  return (
+    <div className="card" style={{ padding: "1rem 1.125rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)", marginBottom: "0.2rem" }}>📍 {loc.name}</p>
+        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{loc.sheetId}</p>
+      </div>
+      <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
+        <a href={`https://docs.google.com/spreadsheets/d/${loc.sheetId}/edit`} target="_blank" rel="noreferrer"
+          style={{ fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, background: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--bg-border)", textDecoration: "none" }}>
+          View Sheet ↗
+        </a>
+        {confirm ? (
+          <>
+            <button onClick={doDelete} disabled={deleting}
+              style={{ fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, background: "var(--danger)", color: "#fff", border: "none", cursor: "pointer" }}>
+              {deleting ? "Removing…" : "Confirm"}
+            </button>
+            <button onClick={() => setConfirm(false)}
+              style={{ fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, background: "var(--bg-elevated)", color: "var(--text-muted)", border: "1px solid var(--bg-border)", cursor: "pointer" }}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button onClick={() => setConfirm(true)}
+            style={{ fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, background: "rgba(239,68,68,0.08)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.2)", cursor: "pointer" }}>
+            Delete
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LocationsPanel({ locations, registryId, needsEnvVar, onCreated }: {
   locations: LocationRecord[]; registryId: string; needsEnvVar: boolean; onCreated: () => void;
 }) {
@@ -894,20 +939,7 @@ function LocationsPanel({ locations, registryId, needsEnvVar, onCreated }: {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           {locations.map(loc => (
-            <div key={loc.id} className="card" style={{ padding: "1rem 1.125rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
-                <p style={{ fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)", marginBottom: "0.2rem" }}>📍 {loc.name}</p>
-                <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace" }}>{loc.sheetId}</p>
-              </div>
-              <a
-                href={`https://docs.google.com/spreadsheets/d/${loc.sheetId}/edit`}
-                target="_blank"
-                rel="noreferrer"
-                style={{ fontSize: "0.72rem", padding: "4px 10px", borderRadius: 6, background: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--bg-border)", textDecoration: "none", flexShrink: 0 }}
-              >
-                View Sheet ↗
-              </a>
-            </div>
+            <LocationRow key={loc.id} loc={loc} onDeleted={onCreated} />
           ))}
         </div>
       )}
