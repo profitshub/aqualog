@@ -34,12 +34,69 @@ let _locCache: { data: LocationRecord[]; ts: number } | null = null;
 
 export function invalidateLocationsCache() { _locCache = null; }
 
+async function ensureLocationsTab(
+  mid: string,
+  adminTokens?: { accessToken: string; refreshToken: string; expiryDate?: number }
+): Promise<void> {
+  // Try service account first (works if already shared), fall back to admin OAuth
+  let sheetsClient = getSheetsClient();
+  try {
+    const meta   = await sheetsClient.spreadsheets.get({ spreadsheetId: mid, fields: "sheets.properties.title" });
+    const titles = (meta.data.sheets ?? []).map(s => s.properties?.title ?? "");
+    if (titles.includes(MASTER_TABS.locations)) return; // already exists
+
+    // Tab missing — create it (rename first sheet if it's the only one, else add)
+    const firstSheetIdNum = 0;
+    if (titles.length === 1) {
+      await sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId: mid,
+        requestBody: { requests: [{ updateSheetProperties: { properties: { sheetId: firstSheetIdNum, title: MASTER_TABS.locations }, fields: "title" } }] },
+      });
+    } else {
+      await sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId: mid,
+        requestBody: { requests: [{ addSheet: { properties: { title: MASTER_TABS.locations, gridProperties: { frozenRowCount: 1 } } } }] },
+      });
+    }
+    await sheetsClient.spreadsheets.values.update({
+      spreadsheetId: mid,
+      range: `${MASTER_TABS.locations}!A1:D1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
+    });
+  } catch {
+    if (!adminTokens) return; // can't do anything without tokens
+    const { createOAuthClient } = await import("@/lib/google-auth");
+    const client = createOAuthClient();
+    client.setCredentials({ access_token: adminTokens.accessToken, refresh_token: adminTokens.refreshToken, expiry_date: adminTokens.expiryDate });
+    sheetsClient = google.sheets({ version: "v4", auth: client });
+    // Try again with admin tokens
+    try {
+      await sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId: mid,
+        requestBody: { requests: [{ addSheet: { properties: { title: MASTER_TABS.locations, gridProperties: { frozenRowCount: 1 } } } }] },
+      });
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: mid,
+        range: `${MASTER_TABS.locations}!A1:D1`,
+        valueInputOption: "RAW",
+        requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
+      });
+    } catch { /* ignore */ }
+  }
+}
+
 /** Returns { id, fromEnv }.
  *  fromEnv=false means it was just created — admin should save MASTER_SHEET_ID to Vercel. */
 export async function getMasterSheetId(
   adminTokens?: { accessToken: string; refreshToken: string; expiryDate?: number }
 ): Promise<{ id: string; fromEnv: boolean }> {
-  if (process.env.MASTER_SHEET_ID) return { id: process.env.MASTER_SHEET_ID, fromEnv: true };
+  if (process.env.MASTER_SHEET_ID) {
+    // Env var set — ensure the Locations tab exists (handles stale/blank sheets)
+    const mid = process.env.MASTER_SHEET_ID;
+    await ensureLocationsTab(mid, adminTokens);
+    return { id: mid, fromEnv: true };
+  }
   if (_masterSheetIdRuntime)       return { id: _masterSheetIdRuntime, fromEnv: false };
   if (!adminTokens)                throw new Error("Registry not initialised and no admin tokens provided.");
 
