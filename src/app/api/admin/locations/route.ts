@@ -39,10 +39,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "A location with that name already exists" }, { status: 409 });
   }
 
-  if (!process.env.MASTER_SHEET_ID) {
-    return NextResponse.json({ error: "MASTER_SHEET_ID is not configured. See setup guide." }, { status: 503 });
-  }
-
   try {
     const sheetId = await createLocationSheet(locationName);
     await saveLocation(locationId, locationName, sheetId);

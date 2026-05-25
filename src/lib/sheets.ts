@@ -1,6 +1,9 @@
 import { google } from "googleapis";
 
-const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
+const SCOPES = [
+  "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/drive",
+];
 
 function serviceAccount() {
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!);
@@ -11,12 +14,16 @@ export function getSheetsClient() {
   return google.sheets({ version: "v4", auth: serviceAccount() });
 }
 
+function getDriveClient() {
+  return google.drive({ version: "v3", auth: serviceAccount() });
+}
+
 // Legacy single-sheet ID (kept for backwards compat)
 export function sheetId(): string {
   return process.env.GOOGLE_SHEET_ID ?? "";
 }
 
-// ── Location registry (stored in master sheet) ────────────────────────────────
+// ── Location registry — auto-created in service account Drive ─────────────────
 
 export interface LocationRecord {
   id:        string;
@@ -25,16 +32,52 @@ export interface LocationRecord {
   createdAt: string;
 }
 
-const MASTER_TABS = { locations: "Locations" };
+const REGISTRY_NAME = "AquaLog Registry";
+const MASTER_TABS   = { locations: "Locations" };
 
-function masterSheetId(): string {
-  return process.env.MASTER_SHEET_ID ?? "";
-}
-
-// In-memory cache (resets on cold start)
+// In-memory caches (reset on cold start)
+let _masterSheetId: string | null = null;
 let _locCache: { data: LocationRecord[]; ts: number } | null = null;
 
 export function invalidateLocationsCache() { _locCache = null; }
+
+async function getMasterSheetId(): Promise<string> {
+  if (_masterSheetId) return _masterSheetId;
+
+  const drive = getDriveClient();
+
+  // Search for existing registry file owned by the service account
+  const search = await drive.files.list({
+    q: `name='${REGISTRY_NAME}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
+    fields: "files(id)",
+    spaces: "drive",
+  });
+
+  if (search.data.files?.length) {
+    _masterSheetId = search.data.files[0].id!;
+    return _masterSheetId;
+  }
+
+  // First run — create the registry sheet with a Locations tab
+  const sheets = getSheetsClient();
+  const created = await sheets.spreadsheets.create({
+    requestBody: {
+      properties: { title: REGISTRY_NAME },
+      sheets: [{ properties: { title: MASTER_TABS.locations, gridProperties: { frozenRowCount: 1 } } }],
+    },
+  });
+  const mid = created.data.spreadsheetId!;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: mid,
+    range: `'${MASTER_TABS.locations}'!A1:D1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
+  });
+
+  _masterSheetId = mid;
+  return mid;
+}
 
 export async function getLocations(): Promise<LocationRecord[]> {
   if (_locCache && Date.now() - _locCache.ts < 3 * 60_000) return _locCache.data;
@@ -44,9 +87,8 @@ export async function getLocations(): Promise<LocationRecord[]> {
 }
 
 export async function readLocations(): Promise<LocationRecord[]> {
-  const mid = masterSheetId();
-  if (!mid) return [];
   try {
+    const mid  = await getMasterSheetId();
     const rows = await readRows(MASTER_TABS.locations, mid);
     return rows.filter(r => r[0] && r[2]).map(r => ({
       id:        r[0],
@@ -57,31 +99,8 @@ export async function readLocations(): Promise<LocationRecord[]> {
   } catch { return []; }
 }
 
-async function ensureMasterLocationsTab(): Promise<void> {
-  const mid = masterSheetId();
-  if (!mid) return;
-  const sheets = getSheetsClient();
-  // Check existing tabs
-  const meta = await sheets.spreadsheets.get({ spreadsheetId: mid, fields: "sheets.properties.title" });
-  const titles = (meta.data.sheets ?? []).map(s => s.properties?.title ?? "");
-  if (titles.includes(MASTER_TABS.locations)) return;
-  // Create the Locations tab + header row
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: mid,
-    requestBody: { requests: [{ addSheet: { properties: { title: MASTER_TABS.locations } } }] },
-  });
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: mid,
-    range: `'${MASTER_TABS.locations}'!A1:D1`,
-    valueInputOption: "RAW",
-    requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
-  });
-}
-
 export async function saveLocation(id: string, name: string, sid: string): Promise<void> {
-  const mid = masterSheetId();
-  if (!mid) throw new Error("MASTER_SHEET_ID env var not set");
-  await ensureMasterLocationsTab();
+  const mid = await getMasterSheetId();
   await appendRow(MASTER_TABS.locations, [id, name, sid, new Date().toISOString()], mid);
   invalidateLocationsCache();
 }
