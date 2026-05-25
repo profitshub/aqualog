@@ -138,13 +138,17 @@ export async function getMasterSheetId(
     requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
   });
 
-  // Share registry with service account
+  // Share registry with service account and all super admins
   const serviceAccountEmail = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!).client_email as string;
-  await drive.permissions.create({
+  const superAdminEmails    = (process.env.ADMIN_EMAILS ?? "").split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
+  await Promise.allSettled([
+    { emailAddress: serviceAccountEmail },
+    ...superAdminEmails.map(e => ({ emailAddress: e })),
+  ].map(t => drive.permissions.create({
     fileId: mid,
-    requestBody: { type: "user", role: "writer", emailAddress: serviceAccountEmail },
+    requestBody: { type: "user", role: "writer", emailAddress: t.emailAddress },
     sendNotificationEmail: false,
-  });
+  })));
 
   _masterSheetIdRuntime = mid;
   return { id: mid, fromEnv: false };
@@ -368,13 +372,22 @@ export async function createLocationSheet(
     },
   });
 
-  // Share with service account so it can read/write logger data
+  // Share with service account (logger read/write) and all super admins (direct Drive access)
   const serviceAccountEmail = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!).client_email as string;
-  await drive.permissions.create({
-    fileId: id,
-    requestBody: { type: "user", role: "writer", emailAddress: serviceAccountEmail },
-    sendNotificationEmail: false,
-  });
+  const superAdminEmails    = (process.env.ADMIN_EMAILS ?? "").split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
+
+  const shareTargets = [
+    { emailAddress: serviceAccountEmail, role: "writer" },
+    ...superAdminEmails.map(e => ({ emailAddress: e, role: "writer" as const })),
+  ];
+
+  await Promise.allSettled(shareTargets.map(t =>
+    drive.permissions.create({
+      fileId: id,
+      requestBody: { type: "user", role: t.role, emailAddress: t.emailAddress },
+      sendNotificationEmail: false,
+    })
+  ));
 
   return id;
 }
