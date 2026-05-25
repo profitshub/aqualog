@@ -57,9 +57,31 @@ export async function readLocations(): Promise<LocationRecord[]> {
   } catch { return []; }
 }
 
+async function ensureMasterLocationsTab(): Promise<void> {
+  const mid = masterSheetId();
+  if (!mid) return;
+  const sheets = getSheetsClient();
+  // Check existing tabs
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: mid, fields: "sheets.properties.title" });
+  const titles = (meta.data.sheets ?? []).map(s => s.properties?.title ?? "");
+  if (titles.includes(MASTER_TABS.locations)) return;
+  // Create the Locations tab + header row
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: mid,
+    requestBody: { requests: [{ addSheet: { properties: { title: MASTER_TABS.locations } } }] },
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: mid,
+    range: `'${MASTER_TABS.locations}'!A1:D1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [["id", "name", "sheetId", "createdAt"]] },
+  });
+}
+
 export async function saveLocation(id: string, name: string, sid: string): Promise<void> {
   const mid = masterSheetId();
   if (!mid) throw new Error("MASTER_SHEET_ID env var not set");
+  await ensureMasterLocationsTab();
   await appendRow(MASTER_TABS.locations, [id, name, sid, new Date().toISOString()], mid);
   invalidateLocationsCache();
 }
