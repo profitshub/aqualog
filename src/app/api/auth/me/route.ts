@@ -3,7 +3,7 @@ import { readSessionFromHeaders } from "@/lib/google-auth";
 
 export async function GET(req: NextRequest) {
   const session = readSessionFromHeaders(req.headers);
-  if (!session || !session.role) {
+  if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return NextResponse.json({
